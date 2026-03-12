@@ -1,4 +1,4 @@
-VRoid Mobile Web App
+VRoid AI Chat
 
 1. start-webapp.bat
 PCでローカル表示します。
@@ -8,5 +8,11 @@ PCでローカル表示します。
 URLは起動ごとに変わります。
 黒い画面に https://... のURLが表示されたら、そのURLを開いてください。
 
-同じWi-Fi内だけなら start-webapp.bat で十分です。
-インターネット越しに開きたいときは start-public-url.bat を使ってください。
+APIキーを入れる場合:
+- このフォルダに .env または .env.local を置きます。
+- OPENAI_API_KEY=... を設定してください。
+- 必要なら OPENAI_MODEL=gpt-5 のようにモデルも変えられます。
+
+注意:
+- APIキーは index.html や viewer.js に直接書かないでください。
+- publish-static は静的公開用なので秘密情報は置かないでください。
