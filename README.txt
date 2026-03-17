@@ -1,18 +1,15 @@
-VRoid AI Chat
+﻿VRoid AI Chat
 
-1. start-webapp.bat
-PCでローカル表示します。
+いちばん簡単な使い方
+1. 1-Open-VRoidAI.bat をダブルクリック
+2. ブラウザで http://localhost:3020 が開きます
+3. 終わるときは 3-Stop-VRoidAI.bat をダブルクリック
 
-2. start-public-url.bat
-一時的な公開URLを発行します。
-URLは起動ごとに変わります。
-黒い画面に https://... のURLが表示されたら、そのURLを開いてください。
+公開URLを一時的に作るとき
+1. 2-Open-Public-URL.bat をダブルクリック
+2. 黒い画面に出る https://... のURLを開きます
 
-APIキーを入れる場合:
-- このフォルダに .env または .env.local を置きます。
-- OPENAI_API_KEY=... を設定してください。
-- 必要なら OPENAI_MODEL=gpt-5 のようにモデルも変えられます。
-
-注意:
-- APIキーは index.html や viewer.js に直接書かないでください。
-- publish-static は静的公開用なので秘密情報は置かないでください。
+補足
+- ローカル表示は 1-Open-VRoidAI.bat だけで大丈夫です
+- モデルが見えないときはブラウザを閉じて、もう一度 1-Open-VRoidAI.bat を実行してください
+- 公開URLをNetlifyで使うときは publish-static フォルダを再デプロイしてください

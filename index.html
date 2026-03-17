@@ -1,20 +1,22 @@
-<!doctype html>
-<html lang="en">
+﻿<!doctype html>
+<html lang="ja">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>VRoid AI Chat</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>VRoid AI</title>
     <style>
       :root {
         --bg: #efe5d5;
-        --bg-2: #e6d6bf;
-        --panel: rgba(255, 250, 243, 0.88);
-        --panel-strong: rgba(255, 251, 246, 0.95);
-        --border: rgba(98, 67, 39, 0.12);
+        --panel: rgba(255, 250, 243, 0.92);
+        --panel-strong: rgba(255, 251, 246, 0.96);
+        --border: rgba(98, 67, 39, 0.14);
         --text: #2f241b;
         --muted: #6e5a4b;
         --accent: #b35f31;
         --accent-2: #8e4720;
+        --shadow-soft: 0 18px 36px rgba(74, 50, 28, 0.08);
+        --shadow-strong: 0 24px 48px rgba(47, 36, 27, 0.18);
       }
       * { box-sizing: border-box; }
       html, body { margin: 0; min-height: 100%; }
@@ -22,8 +24,9 @@
         font-family: "Yu Gothic", sans-serif;
         color: var(--text);
         background:
-          radial-gradient(circle at top left, rgba(255,255,255,0.72), transparent 34%),
-          linear-gradient(165deg, var(--bg) 0%, #f4ecdf 48%, var(--bg-2) 100%);
+          radial-gradient(circle at top, rgba(255, 255, 255, 0.78), transparent 36%),
+          linear-gradient(180deg, #f7efe3 0%, var(--bg) 100%);
+        overscroll-behavior-y: none;
       }
       .app {
         min-height: 100vh;
@@ -33,94 +36,84 @@
       .viewer {
         position: relative;
         overflow: hidden;
+        background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(230,214,191,0.7));
+      }
+      .viewer::after {
+        content: "";
+        position: absolute;
+        inset: auto 0 0 0;
+        height: 24%;
+        background: linear-gradient(180deg, transparent, rgba(128, 93, 58, 0.08));
+        pointer-events: none;
       }
       #stage {
         width: 100%;
         height: 100%;
         min-height: 54vh;
       }
-      .hud {
+      .statusBar {
         position: absolute;
-        top: 14px;
-        left: 14px;
-        right: 14px;
+        top: 12px;
+        right: 12px;
         z-index: 2;
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
       }
-      .pill {
-        padding: 9px 12px;
+      .status {
+        padding: 8px 12px;
         border-radius: 999px;
-        background: rgba(255, 251, 246, 0.92);
+        background: rgba(255, 251, 246, 0.94);
         border: 1px solid var(--border);
         color: var(--muted);
-        font-size: 0.92rem;
+        font-size: 0.88rem;
+        box-shadow: var(--shadow-soft);
       }
       .sidebar {
-        margin: 0 14px 14px;
-        display: grid;
-        gap: 14px;
-      }
-      .panel {
-        padding: 18px;
-        border-radius: 22px;
-        background: var(--panel);
-        border: 1px solid var(--border);
-        box-shadow: 0 18px 40px rgba(60, 35, 16, 0.12);
-        backdrop-filter: blur(16px);
-      }
-      .intro h1 {
-        margin: 0 0 10px;
-        font-size: clamp(1.8rem, 8vw, 3rem);
-        line-height: 1;
-      }
-      .intro p,
-      .hint,
-      .metaLabel {
-        margin: 0;
-        color: var(--muted);
-        line-height: 1.7;
-      }
-      .metaRow {
         display: grid;
         gap: 12px;
-        margin-top: 14px;
+        padding: 12px;
+      }
+      .panel {
+        padding: 14px;
+        border-radius: 18px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow-soft);
+      }
+      .controls {
+        display: grid;
+        gap: 10px;
       }
       .field {
         display: grid;
         gap: 6px;
       }
-      .field select {
+      .field label,
+      .hint,
+      .meta {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .field select,
+      .composer textarea {
         width: 100%;
         padding: 12px 14px;
         border-radius: 14px;
         border: 1px solid var(--border);
-        background: rgba(255, 252, 247, 0.96);
+        background: rgba(255, 252, 247, 0.98);
         color: var(--text);
         font: inherit;
       }
       .chat {
         display: grid;
-        grid-template-rows: auto minmax(220px, 1fr) auto;
-        min-height: 42vh;
-      }
-      .chatHeader {
-        display: flex;
-        justify-content: space-between;
         gap: 12px;
-        align-items: center;
-        margin-bottom: 12px;
-      }
-      .chatHeader h2 {
-        margin: 0;
-        font-size: 1.15rem;
       }
       .messages {
+        min-height: 220px;
+        max-height: 36vh;
         overflow: auto;
         display: grid;
         gap: 10px;
         padding-right: 4px;
+        scroll-behavior: smooth;
       }
       .message {
         max-width: 92%;
@@ -141,98 +134,254 @@
       .composer {
         display: grid;
         gap: 10px;
-        margin-top: 14px;
       }
       .composer textarea {
-        width: 100%;
-        min-height: 104px;
+        min-height: 96px;
         resize: vertical;
-        padding: 14px 16px;
-        border-radius: 18px;
-        border: 1px solid var(--border);
-        background: rgba(255, 252, 247, 0.96);
-        color: var(--text);
-        font: inherit;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
       }
-      .composerRow {
+      .actions {
         display: flex;
-        justify-content: space-between;
+        justify-content: flex-end;
         gap: 12px;
         align-items: center;
       }
       .sendButton {
         border: none;
         border-radius: 999px;
+        min-width: 92px;
         padding: 12px 18px;
         background: linear-gradient(135deg, var(--accent), var(--accent-2));
         color: #fff;
         font: inherit;
+        font-weight: 700;
         cursor: pointer;
+        box-shadow: 0 14px 24px rgba(179, 95, 49, 0.22);
       }
       .sendButton:disabled {
         opacity: 0.7;
         cursor: wait;
       }
-      @media (min-width: 980px) {
+      .mobileMenuButton,
+      .mobileMenuBackdrop {
+        display: none;
+      }
+      .mobileMenuButton {
+        border: none;
+        border-radius: 999px;
+        padding: 10px 14px;
+        background: rgba(255, 251, 246, 0.9);
+        border: 1px solid var(--border);
+        color: var(--text);
+        font: inherit;
+        cursor: pointer;
+        box-shadow: var(--shadow-soft);
+      }
+      .mobileMenuButton[aria-expanded="true"] {
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        color: #fff;
+      }
+      .mobileMenuClose {
+        display: none;
+        border: none;
+        border-radius: 999px;
+        padding: 10px 14px;
+        background: rgba(255, 252, 247, 0.98);
+        border: 1px solid var(--border);
+        color: var(--text);
+        font: inherit;
+        cursor: pointer;
+      }
+      @media (max-width: 979px) {
+        body {
+          overflow: hidden;
+        }
         .app {
-          grid-template-columns: minmax(460px, 1.15fr) minmax(360px, 0.85fr);
-          grid-template-rows: 1fr;
-          gap: 18px;
-          padding: 18px;
+          min-height: 100svh;
+          display: grid;
+          grid-template-rows: minmax(36svh, 41svh) minmax(0, 1fr);
+        }
+        .viewer {
+          position: relative;
+          overflow: hidden;
+          border-radius: 0 0 28px 28px;
+        }
+        #stage {
+          min-height: 36svh;
+        }
+        .statusBar {
+          top: 62px;
+          right: 14px;
+        }
+        .mobileMenuButton {
+          position: fixed;
+          top: 14px;
+          left: 14px;
+          z-index: 4;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          backdrop-filter: blur(8px);
+        }
+        .mobileMenuBackdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 4;
+          background: rgba(47, 36, 27, 0.18);
+          backdrop-filter: blur(4px);
+        }
+        body[data-mobile-menu="closed"] .mobileMenuBackdrop {
+          display: none;
         }
         .sidebar {
-          margin: 0;
+          position: relative;
+          padding: 0 12px 12px;
+          display: block;
+          margin-top: -14px;
+          z-index: 3;
+        }
+        .controls {
+          position: fixed;
+          top: 68px;
+          left: 14px;
+          right: 14px;
+          z-index: 5;
+          display: grid;
+          gap: 10px;
+          max-height: calc(100svh - 88px);
+          overflow: auto;
+          border-radius: 22px;
+          background: rgba(255, 249, 241, 0.96);
+          box-shadow: var(--shadow-strong);
+          opacity: 0;
+          transform: translateY(-12px);
+          pointer-events: none;
+          transition: opacity 180ms ease, transform 180ms ease;
+          backdrop-filter: blur(14px);
+        }
+        body[data-mobile-menu="open"] .controls {
+          opacity: 1;
+          transform: translateY(0);
+          pointer-events: auto;
+        }
+        .controlsHeader {
+          display: grid;
+          grid-template-columns: 1fr auto;
+          gap: 12px;
+          align-items: center;
+        }
+        .mobileMenuClose {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .chat {
+          min-height: 0;
+          height: calc(64svh - 22px);
+          display: grid;
+          grid-template-rows: minmax(0, 1fr) auto;
+          padding: 14px 14px 12px;
+          border-radius: 24px;
+          background:
+            linear-gradient(180deg, rgba(255, 252, 247, 0.97), rgba(250, 244, 236, 0.94));
+          border: 1px solid rgba(98, 67, 39, 0.12);
+          box-shadow: 0 22px 48px rgba(74, 50, 28, 0.14);
+        }
+        .messages {
+          min-height: 0;
+          max-height: none;
+          padding-top: 4px;
+        }
+        .composer {
+          position: sticky;
+          bottom: 0;
+          padding-top: 10px;
+          background: linear-gradient(180deg, rgba(250, 244, 236, 0), rgba(250, 244, 236, 0.96) 24%);
+        }
+        .composer textarea {
+          min-height: 84px;
+          padding: 14px 15px;
+          border-radius: 18px;
+        }
+        .actions {
+          align-items: flex-end;
+        }
+        .sendButton {
+          min-width: 104px;
+          padding: 13px 20px;
+        }
+      }
+      @media (min-width: 980px) {
+        .app {
+          height: 100vh;
+          min-height: 100vh;
+          grid-template-columns: minmax(440px, 1.18fr) minmax(320px, 0.82fr);
+          grid-template-rows: 1fr;
+          gap: 16px;
+          padding: 16px;
+          overflow: hidden;
+        }
+        .viewer {
+          border-radius: 24px;
+          border: 1px solid var(--border);
+        }
+        #stage {
+          min-height: calc(100vh - 32px);
+        }
+        .sidebar {
+          min-height: 0;
+          padding: 0;
+          overflow: hidden;
           align-content: stretch;
           grid-template-rows: auto 1fr;
         }
-        .viewer {
-          border-radius: 28px;
-          background: rgba(255, 250, 243, 0.72);
-          border: 1px solid var(--border);
-          box-shadow: 0 18px 40px rgba(60, 35, 16, 0.12);
+        .chat {
+          min-height: 0;
+          height: 100%;
+          display: grid;
+          grid-template-rows: minmax(0, 1fr) auto;
+          overflow: hidden;
         }
-        #stage {
-          min-height: calc(100vh - 36px);
+        .messages {
+          min-height: 0;
+          max-height: none;
+          overflow: auto;
+        }
+        .composer {
+          padding-top: 10px;
+          background: linear-gradient(180deg, rgba(255, 250, 243, 0), rgba(255, 250, 243, 0.96) 24%);
         }
       }
     </style>
   </head>
-  <body>
+  <body data-mobile-menu="closed">
+    <button class="mobileMenuButton" id="mobileMenuButton" type="button" aria-expanded="false">メニュー</button>
+    <div class="mobileMenuBackdrop" id="mobileMenuBackdrop" hidden></div>
     <main class="app">
       <section class="viewer">
-        <div class="hud">
-          <div class="pill">VRoid AI Chat</div>
-          <div class="pill" id="status">Loading...</div>
-        </div>
         <div id="stage"></div>
       </section>
       <aside class="sidebar">
-        <section class="panel intro">
-          <h1>VRoid AI Chat</h1>
-          <p>Switch between your VRM models and chat with the character using your OpenAI API key.</p>
-          <div class="metaRow">
-            <div class="field">
-              <label class="metaLabel" for="modelSelect">Character model</label>
-              <select id="modelSelect"></select>
-            </div>
-            <div class="pill" id="apiState">Checking API...</div>
+        <section class="panel controls">
+          <div class="controlsHeader">
+            <div class="meta">メニュー</div>
+            <button class="mobileMenuClose" id="mobileMenuCloseButton" type="button">閉じる</button>
           </div>
         </section>
         <section class="panel chat">
-          <div class="chatHeader">
-            <h2>Chat</h2>
-          </div>
           <div class="messages" id="messages"></div>
           <form class="composer" id="chatForm">
-            <textarea id="chatInput" placeholder="Talk to the character"></textarea>
-            <div class="composerRow">
-              <p class="hint" id="chatHint">Press Enter to send. Use Shift+Enter for a new line.</p>
-              <button class="sendButton" id="sendButton" type="submit">Send</button>
+            <textarea id="chatInput" placeholder="メッセージを入力"></textarea>
+            <div class="actions">
+              <button class="sendButton" id="sendButton" type="submit">送信</button>
             </div>
           </form>
         </section>
       </aside>
     </main>
-    <script type="module" src="./viewer.js"></script>
+    <div hidden aria-hidden="true">
+      <select id="modelSelect"></select>
+    </div>
+    <script type="module" src="./viewer.js?v=20260318o"></script>
   </body>
 </html>
