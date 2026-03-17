@@ -37705,6 +37705,16 @@ var DIRECT_MOUTH_SUPPORT_TARGETS = {
   close: ["Fcl_MTH_Close"],
   neutral: ["Fcl_MTH_Neutral"]
 };
+var DIRECT_MOUTH_CONFLICT_TARGETS = [
+  "Fcl_MTH_Fun",
+  "Fcl_MTH_Joy",
+  "Fcl_MTH_Sorrow",
+  "Fcl_MTH_Angry",
+  "Fcl_MTH_Small",
+  "Fcl_MTH_SkinFung",
+  "Fcl_MTH_SkinFung_R",
+  "Fcl_MTH_SkinFung_L"
+];
 var VISEME_JAW_OPENNESS = {
   aa: 1.08,
   oh: 0.86,
@@ -37716,12 +37726,12 @@ var MAX_VISEME_PEAK = 0.82;
 var MAX_VISEME_TOTAL = 1.08;
 var MAX_JAW_TARGET = 0.7;
 var JAW_ROTATION_MULTIPLIER = 0.2;
-var DIRECT_MOUTH_MORPH_SCALE = 1.9;
-var DIRECT_MOUTH_OPEN_SUPPORT = 0.42;
-var DIRECT_MOUTH_LARGE_SCALE = 2.05;
-var DIRECT_MOUTH_DROP_SCALE = 1.42;
-var DIRECT_MOUTH_LIFT_SCALE = 0.72;
-var DIRECT_MOUTH_SURPRISED_SCALE = 0.68;
+var DIRECT_MOUTH_MORPH_SCALE = 2.2;
+var DIRECT_MOUTH_OPEN_SUPPORT = 0.56;
+var DIRECT_MOUTH_LARGE_SCALE = 2.55;
+var DIRECT_MOUTH_DROP_SCALE = 1.78;
+var DIRECT_MOUTH_LIFT_SCALE = 0.96;
+var DIRECT_MOUTH_SURPRISED_SCALE = 0.82;
 var CJK_VISEME_PATTERNS = [
   [
     { viseme: "aa", durationMs: 98, strength: 0.74 },
@@ -39102,9 +39112,13 @@ function applyDirectMouthMorphFallback() {
     return;
   }
   let dominantValue = 0;
+  let totalValue = 0;
   for (const viseme of MOUTH_VISEMES) {
-    dominantValue = Math.max(dominantValue, speechState.visemeValues[viseme] || 0);
+    const visemeValue = speechState.visemeValues[viseme] || 0;
+    dominantValue = Math.max(dominantValue, visemeValue);
+    totalValue += visemeValue;
   }
+  const speechEnergy = MathUtils.clamp(dominantValue * 0.78 + totalValue * 0.44, 0, 1);
   for (const viseme of MOUTH_VISEMES) {
     const targetNames = DIRECT_MOUTH_MORPH_TARGETS[viseme];
     if (!targetNames) {
@@ -39118,17 +39132,18 @@ function applyDirectMouthMorphFallback() {
   }
   const aaValue = speechState.visemeValues.aa || 0;
   const ohValue = speechState.visemeValues.oh || 0;
-  const openValue = speechState.active ? MathUtils.clamp(dominantValue * DIRECT_MOUTH_LARGE_SCALE + aaValue * 0.24 + ohValue * 0.18, 0, 1) : 0;
-  const verticalOpenBias = Math.max(aaValue, ohValue * 0.88, dominantValue * 0.74);
+  const openValue = speechState.active ? MathUtils.clamp(speechEnergy * DIRECT_MOUTH_LARGE_SCALE + aaValue * 0.34 + ohValue * 0.26, 0, 1) : 0;
+  const verticalOpenBias = Math.max(aaValue * 1.04, ohValue * 0.96, speechEnergy * 0.88);
   const dropValue = speechState.active ? MathUtils.clamp(verticalOpenBias * DIRECT_MOUTH_DROP_SCALE, 0, 1) : 0;
-  const liftValue = speechState.active ? MathUtils.clamp((aaValue * 0.58 + ohValue * 0.34 + dominantValue * 0.18) * DIRECT_MOUTH_LIFT_SCALE, 0, 0.8) : 0;
-  const surprisedValue = speechState.active ? MathUtils.clamp((aaValue * 0.7 + ohValue * 0.5 + dominantValue * 0.16) * DIRECT_MOUTH_SURPRISED_SCALE, 0, 0.82) : 0;
+  const liftValue = speechState.active ? MathUtils.clamp((aaValue * 0.72 + ohValue * 0.42 + speechEnergy * 0.24) * DIRECT_MOUTH_LIFT_SCALE, 0, 0.92) : 0;
+  const surprisedValue = speechState.active ? MathUtils.clamp((aaValue * 0.78 + ohValue * 0.6 + speechEnergy * 0.22) * DIRECT_MOUTH_SURPRISED_SCALE, 0, 0.92) : 0;
   setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.open, openValue);
   setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.drop, dropValue);
   setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.lift, liftValue);
   setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.surprised, surprisedValue);
   setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.close, 0);
   setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.neutral, 0);
+  setMorphTargetValue(DIRECT_MOUTH_CONFLICT_TARGETS, 0);
 }
 function buildLipSyncFrames(text) {
   const frames = [];
