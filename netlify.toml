@@ -1,7 +1,28 @@
 [build]
-publish = "publish-static"
+publish = "."
+functions = "netlify/functions"
 
 [[headers]]
 for = "/*"
   [headers.values]
   Cache-Control = "no-store"
+
+[[redirects]]
+from = "/api/status"
+to = "/.netlify/functions/status"
+status = 200
+
+[[redirects]]
+from = "/api/models"
+to = "/.netlify/functions/models"
+status = 200
+
+[[redirects]]
+from = "/api/history"
+to = "/.netlify/functions/history"
+status = 200
+
+[[redirects]]
+from = "/api/chat"
+to = "/.netlify/functions/chat"
+status = 200
