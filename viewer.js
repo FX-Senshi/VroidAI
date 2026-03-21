@@ -37614,7 +37614,7 @@ var mobileMenuButton = document.getElementById("mobileMenuButton");
 var mobileMenuBackdrop = document.getElementById("mobileMenuBackdrop");
 var mobileMenuCloseButton = document.getElementById("mobileMenuCloseButton");
 var runtimeSearchParams = new URLSearchParams(window.location.search);
-var BUILD_VERSION = "20260321r";
+var BUILD_VERSION = "20260321s";
 var DEBUG_LIP_SYNC_MODE = runtimeSearchParams.has("debugLipSync");
 var DEBUG_LIP_SYNC_AUTORUN = runtimeSearchParams.has("debugLipSyncAutoRun");
 var FEMALE_VOICE_NAME_PATTERN = /(female|woman|girl|kyoko|nanami|naomi|ayumi|haruka|sayaka|sakura|samantha|zira|aria|jenny|sonia|monica|lucia|hemi|xiaoxiao|huihui|ja-jp nanami|ja-jp haruka)/iu;
@@ -37632,6 +37632,9 @@ var CUTE_VOICE_NAME_PRIORITY = [
 ];
 var CUTE_VOICE_RATE = 0.88;
 var CUTE_VOICE_PITCH = 1.92;
+var SHARED_TTS_MODE = "shared-cute";
+var SHARED_TTS_OPTION_LABEL = "\u81EA\u52D5 (\u5171\u901ATTS\u304A\u3059\u3059\u3081)";
+var BROWSER_VOICE_OPTION_LABEL = "\u30D6\u30E9\u30A6\u30B6\u97F3\u58F0 (\u7AEF\u672B\u4F9D\u5B58)";
 var MODEL_CAMERA_OVERRIDES = {
   "ojisan.vrm": {
     targetYFactor: 0.23,
@@ -37685,7 +37688,7 @@ var DEFAULT_CAMERA = {
 var CHAT_SESSION_STORAGE_KEY = "vroid-chat-session-v1";
 var SELECTED_MODEL_STORAGE_KEY = "vroid-selected-model-v1";
 var CAMERA_ADJUSTMENTS_STORAGE_KEY = "vroid-camera-adjustments-v9";
-var VOICE_SETTINGS_STORAGE_KEY = "vroid-voice-settings-v2";
+var VOICE_SETTINGS_STORAGE_KEY = "vroid-voice-settings-v3";
 var CAMERA_HEIGHT_RANGE_FALLBACK = { min: -1.8, max: 1.2 };
 var CAMERA_DISTANCE_RANGE_FALLBACK = { min: -3.4, max: 1.8 };
 var CAMERA_HORIZONTAL_RANGE_FALLBACK = { min: -1.2, max: 1.2 };
@@ -37756,6 +37759,7 @@ var DEFAULT_CAMERA_ADJUSTMENTS = {
 };
 var DEFAULT_VOICE_SETTINGS = {
   enabled: true,
+  voiceMode: SHARED_TTS_MODE,
   voiceURI: ""
 };
 var messages = [];
@@ -37946,10 +37950,16 @@ var fixedGirlTextureState = {
 var cameraTools = null;
 var voiceTools = null;
 var availableVoices = [];
+var latestApiStatus = null;
 var lipSyncDebugPre = null;
 var cameraToolRanges = /* @__PURE__ */ new Map();
 var speechSynthesisPrimed = false;
 var speechPrimeListenerAttached = false;
+var sharedTtsAudioContext = null;
+var sharedTtsAudioGainNode = null;
+var activeSharedTtsSource = null;
+var activeSharedTtsAudioElement = null;
+var activeSharedTtsObjectUrl = "";
 var mouthDiagnosticState = {
   active: false,
   startedAtMs: 0
@@ -37967,6 +37977,7 @@ var speechState = {
   boundarySupported: false,
   timingScale: 1,
   timingOffsetMs: 0,
+  leadMs: 0,
   lastBoundaryAtMs: 0,
   lastBoundaryFrameIndex: -1,
   lastBoundaryStrength: 0,
@@ -38547,15 +38558,18 @@ function createVoiceTools() {
     });
     if (!enabledToggle.checked && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
+      stopSharedTtsPlayback();
       stopLipSync(currentVrm, true);
     }
     updateVoiceTools();
   });
   voiceSelect.addEventListener("change", () => {
     const settings = getVoiceSettings();
+    const nextValue = voiceSelect.value || SHARED_TTS_MODE;
     saveVoiceSettings({
       ...settings,
-      voiceURI: voiceSelect.value || ""
+      voiceMode: nextValue === SHARED_TTS_MODE ? SHARED_TTS_MODE : "browser",
+      voiceURI: nextValue.startsWith("browser:") ? nextValue.slice("browser:".length) : ""
     });
     updateVoiceTools();
   });
@@ -38695,6 +38709,60 @@ function updateCameraTools() {
   cameraTools.distanceValue.textContent = formatSignedValue(nextDistanceValue);
   cameraTools.horizontalValue.textContent = formatSignedValue(nextHorizontalValue);
 }
+function ensureSharedTtsAudioContext() {
+  if (sharedTtsAudioContext) {
+    return sharedTtsAudioContext;
+  }
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextCtor) {
+    return null;
+  }
+  sharedTtsAudioContext = new AudioContextCtor();
+  sharedTtsAudioGainNode = sharedTtsAudioContext.createGain();
+  sharedTtsAudioGainNode.connect(sharedTtsAudioContext.destination);
+  return sharedTtsAudioContext;
+}
+function stopSharedTtsPlayback() {
+  if (activeSharedTtsSource) {
+    try {
+      activeSharedTtsSource.onended = null;
+      activeSharedTtsSource.stop(0);
+    } catch {
+    }
+    try {
+      activeSharedTtsSource.disconnect();
+    } catch {
+    }
+    activeSharedTtsSource = null;
+  }
+  if (activeSharedTtsAudioElement) {
+    activeSharedTtsAudioElement.onended = null;
+    activeSharedTtsAudioElement.onerror = null;
+    try {
+      activeSharedTtsAudioElement.pause();
+    } catch {
+    }
+    activeSharedTtsAudioElement.removeAttribute("src");
+    activeSharedTtsAudioElement.load?.();
+    activeSharedTtsAudioElement = null;
+  }
+  if (activeSharedTtsObjectUrl) {
+    URL.revokeObjectURL(activeSharedTtsObjectUrl);
+    activeSharedTtsObjectUrl = "";
+  }
+}
+async function primeSharedTtsAudioOnce() {
+  const context = ensureSharedTtsAudioContext();
+  if (!context) {
+    return;
+  }
+  try {
+    if (context.state !== "running") {
+      await context.resume();
+    }
+  } catch {
+  }
+}
 function primeSpeechSynthesisOnce() {
   if (!("speechSynthesis" in window) || speechSynthesisPrimed) {
     return;
@@ -38727,6 +38795,7 @@ function attachSpeechPrimeListeners() {
   speechPrimeListenerAttached = true;
   const primeSpeech = () => {
     primeSpeechSynthesisOnce();
+    void primeSharedTtsAudioOnce();
   };
   window.addEventListener("pointerdown", primeSpeech, { passive: true, once: true });
   window.addEventListener("touchstart", primeSpeech, { passive: true, once: true });
@@ -38737,12 +38806,13 @@ function attachSpeechPrimeListeners() {
   chatInput?.addEventListener("touchstart", primeSpeech, { passive: true });
 }
 function initSpeechSupport() {
+  attachSpeechPrimeListeners();
+  void primeSharedTtsAudioOnce();
   if (!("speechSynthesis" in window)) {
     updateVoiceTools();
     return;
   }
   refreshAvailableVoices();
-  attachSpeechPrimeListeners();
   const synth = window.speechSynthesis;
   if (typeof synth.addEventListener === "function") {
     synth.addEventListener("voiceschanged", refreshAvailableVoices);
@@ -38808,39 +38878,45 @@ function getSelectableVoices() {
   }
   return availableVoices;
 }
+function supportsSharedTts() {
+  return latestApiStatus?.ttsConfigured !== false;
+}
+function isSharedTtsMode(settings = getVoiceSettings()) {
+  return settings.voiceMode !== "browser";
+}
 function updateVoiceTools() {
   if (!voiceTools) {
-    return;
-  }
-  if (!("speechSynthesis" in window)) {
-    voiceTools.enabledToggle.checked = false;
-    voiceTools.enabledToggle.disabled = true;
-    voiceTools.voiceSelect.disabled = true;
-    voiceTools.voiceSelect.replaceChildren(new Option("\u3053\u306E\u30D6\u30E9\u30A6\u30B6\u306F\u97F3\u58F0\u975E\u5BFE\u5FDC", ""));
-    voiceTools.voiceStatus.textContent = "\u3053\u306E\u30D6\u30E9\u30A6\u30B6\u3067\u306F\u97F3\u58F0\u8AAD\u307F\u4E0A\u3052\u3092\u4F7F\u3048\u307E\u305B\u3093\u3002";
     return;
   }
   const settings = getVoiceSettings();
   const preferredVoice = getPreferredSpeechVoice(settings);
   const selectableVoices = getSelectableVoices();
+  const nextOptions = [new Option(SHARED_TTS_OPTION_LABEL, SHARED_TTS_MODE)];
   voiceTools.enabledToggle.disabled = false;
   voiceTools.enabledToggle.checked = settings.enabled;
-  const nextOptions = [new Option("\u81EA\u52D5 (\u5973\u6027\u304A\u3059\u3059\u3081)", "")];
-  for (const voice of selectableVoices) {
-    const suffix = voice.lang ? ` (${voice.lang})` : "";
-    nextOptions.push(new Option(`${voice.name}${suffix}`, voice.voiceURI));
+  if (selectableVoices.length) {
+    nextOptions.push(new Option(BROWSER_VOICE_OPTION_LABEL, "browser:auto"));
+    for (const voice of selectableVoices) {
+      const suffix = voice.lang ? ` (${voice.lang})` : "";
+      nextOptions.push(new Option(`${voice.name}${suffix}`, `browser:${voice.voiceURI}`));
+    }
   }
   voiceTools.voiceSelect.replaceChildren(...nextOptions);
-  voiceTools.voiceSelect.value = settings.voiceURI || "";
-  if (voiceTools.voiceSelect.value !== (settings.voiceURI || "")) {
-    voiceTools.voiceSelect.value = "";
+  const selectedValue = isSharedTtsMode(settings) ? SHARED_TTS_MODE : settings.voiceURI ? `browser:${settings.voiceURI}` : "browser:auto";
+  voiceTools.voiceSelect.value = selectedValue;
+  if (voiceTools.voiceSelect.value !== selectedValue) {
+    voiceTools.voiceSelect.value = SHARED_TTS_MODE;
   }
-  voiceTools.voiceSelect.disabled = !settings.enabled || selectableVoices.length === 0;
+  voiceTools.voiceSelect.disabled = !settings.enabled || !supportsSharedTts() && selectableVoices.length === 0;
   if (!settings.enabled) {
     voiceTools.voiceStatus.textContent = MINIMAL_APP_MODE ? "\u97F3\u58F0\u30AA\u30D5" : "\u8FD4\u7B54\u97F3\u58F0\u306F\u30AA\u30D5\u3067\u3059\u3002";
     return;
   }
-  if (!selectableVoices.length) {
+  if (isSharedTtsMode(settings)) {
+    voiceTools.voiceStatus.textContent = supportsSharedTts() ? MINIMAL_APP_MODE ? "\u5171\u901ATTS (\u304B\u308F\u3044\u3044\u58F0)" : "\u8FD4\u7B54\u3092\u5171\u901ATTS\u3067\u8AAD\u307F\u4E0A\u3052\u307E\u3059\u3002" : MINIMAL_APP_MODE ? "\u5171\u901ATTS\u672A\u8A2D\u5B9A" : "\u5171\u901ATTS\u672A\u8A2D\u5B9A\u3067\u3059\u3002API\u8A2D\u5B9A\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
+    return;
+  }
+  if (!("speechSynthesis" in window) || !selectableVoices.length) {
     voiceTools.voiceStatus.textContent = MINIMAL_APP_MODE ? "\u97F3\u58F0\u3092\u6E96\u5099\u4E2D..." : "\u97F3\u58F0\u3092\u8AAD\u307F\u8FBC\u307F\u4E2D\u3067\u3059\u3002\u5C11\u3057\u5F85\u3063\u3066\u304B\u3089\u9001\u4FE1\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
     return;
   }
@@ -38913,6 +38989,7 @@ function loadVoiceSettings() {
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? {
       enabled: parsed.enabled !== false,
+      voiceMode: parsed.voiceMode === "browser" ? "browser" : SHARED_TTS_MODE,
       voiceURI: typeof parsed.voiceURI === "string" ? parsed.voiceURI : ""
     } : { ...DEFAULT_VOICE_SETTINGS };
   } catch {
@@ -38926,6 +39003,7 @@ function saveVoiceSettings(settings) {
   try {
     window.localStorage.setItem(VOICE_SETTINGS_STORAGE_KEY, JSON.stringify({
       enabled: settings.enabled !== false,
+      voiceMode: settings.voiceMode === "browser" ? "browser" : SHARED_TTS_MODE,
       voiceURI: typeof settings.voiceURI === "string" ? settings.voiceURI : ""
     }));
   } catch {
@@ -39410,6 +39488,7 @@ async function checkApiStatus() {
   try {
     const response = await fetch("/api/status");
     const data = await response.json();
+    latestApiStatus = data;
     setElementText(
       apiState,
       data.openaiConfigured ? `API ready (${data.model})` : "API key missing"
@@ -39432,12 +39511,15 @@ async function checkApiStatus() {
       setElementText(memoryState, data.memoryImport?.message || "ChatGPT\u30C7\u30FC\u30BF\u672A\u691C\u51FA");
     }
     updateGrowthState(data.growth);
+    updateVoiceTools();
   } catch (error) {
     console.error(error);
+    latestApiStatus = null;
     setElementText(apiState, "API check failed");
     setElementText(dbState, "\u4F1A\u8A71DB\u78BA\u8A8D\u5931\u6557");
     setElementText(memoryState, "ChatGPT\u30C7\u30FC\u30BF\u78BA\u8A8D\u5931\u6557");
     setElementText(growthState, "AI growth \u78BA\u8A8D\u5931\u6557");
+    updateVoiceTools();
   }
 }
 function updateGrowthState(growth, growthLearning = null) {
@@ -40385,6 +40467,7 @@ function stopLipSync(vrmRef = currentVrm, immediate = false) {
   speechState.boundarySupported = false;
   speechState.timingScale = 1;
   speechState.timingOffsetMs = 0;
+  speechState.leadMs = 0;
   speechState.lastBoundaryAtMs = 0;
   speechState.lastBoundaryFrameIndex = -1;
   speechState.lastBoundaryStrength = 0;
@@ -40396,8 +40479,9 @@ function stopLipSync(vrmRef = currentVrm, immediate = false) {
     resetVisemes(vrmRef);
   }
 }
-function startLipSync(text, rate = 1) {
+function startLipSync(text, options = 1) {
   stopLipSync();
+  const normalizedOptions = typeof options === "number" ? { rate: options } : options && typeof options === "object" ? options : {};
   speechState.frames = buildLipSyncFrames(text);
   speechState.totalDurationMs = speechState.frames.reduce(
     (total, frame) => total + frame.durationMs,
@@ -40406,16 +40490,20 @@ function startLipSync(text, rate = 1) {
   speechState.startTimeMs = performance.now();
   speechState.active = true;
   speechState.syncMode = "timed";
-  const normalizedRate = Math.max(rate, 0.65);
-  speechState.timingScale = 1 / normalizedRate * (currentModel === FIXED_MODEL_NAME ? FIXED_GIRL_FALLBACK_TIMING_SCALE : 1);
+  const normalizedRate = Math.max(Number(normalizedOptions.rate) || 1, 0.65);
+  const fallbackTimingScale = 1 / normalizedRate * (currentModel === FIXED_MODEL_NAME ? FIXED_GIRL_FALLBACK_TIMING_SCALE : 1);
+  const expectedDurationMs = Number(normalizedOptions.expectedDurationMs) || 0;
+  const durationTimingScale = expectedDurationMs > 0 && speechState.totalDurationMs > 0 ? expectedDurationMs / speechState.totalDurationMs : 0;
+  speechState.timingScale = durationTimingScale > 0 ? durationTimingScale : fallbackTimingScale;
   speechState.timingOffsetMs = 0;
+  speechState.leadMs = Number.isFinite(normalizedOptions.leadMs) ? Number(normalizedOptions.leadMs) : currentModel === FIXED_MODEL_NAME ? FIXED_GIRL_SPEECH_LEAD_MS : 0;
   speechState.currentFrameIndex = speechState.frames.length ? 0 : -1;
   speechState.currentFrameStartedAtMs = speechState.startTimeMs;
   speechState.lastBoundaryAtMs = speechState.startTimeMs;
   speechState.lastKnownSpeechElapsedMs = 0;
   const charCount = Array.from(String(text || "")).length;
   const estimatedSpeechDurationMs = Math.max(
-    speechState.totalDurationMs * speechState.timingScale * 1.18 + 1100,
+    speechState.totalDurationMs * speechState.timingScale * 1.14 + 880,
     charCount * (currentModel === FIXED_MODEL_NAME ? FIXED_GIRL_FALLBACK_CHAR_DURATION_MS : 120) / normalizedRate + 1100,
     1800
   );
@@ -40461,7 +40549,7 @@ function getLipSyncHintElapsedMs(nowMs) {
   const actualElapsedMs = getActualSpeechElapsedMs(nowMs);
   speechState.lastKnownSpeechElapsedMs = actualElapsedMs;
   const scale = MathUtils.clamp(speechState.timingScale || 1, 0.35, 3.6);
-  const leadMs = currentModel === FIXED_MODEL_NAME ? FIXED_GIRL_SPEECH_LEAD_MS : 0;
+  const leadMs = Number.isFinite(speechState.leadMs) ? speechState.leadMs : 0;
   return Math.max(0, (actualElapsedMs + leadMs - (speechState.timingOffsetMs || 0)) / scale);
 }
 function syncLipSyncToSpeechBoundary(event) {
@@ -40745,19 +40833,113 @@ function applyLipSync(vrmRef) {
     }
   }
 }
-function speak(text) {
-  if (!text) {
-    return;
+async function parseJsonErrorResponse(response) {
+  try {
+    return await response.json();
+  } catch {
+    return {
+      error: `HTTP ${response.status}`
+    };
   }
-  const voiceSettings = getVoiceSettings();
-  if (!voiceSettings.enabled) {
-    return;
-  }
-  if (!("speechSynthesis" in window)) {
-    if (voiceTools?.voiceStatus) {
-      voiceTools.voiceStatus.textContent = "\u3053\u306E\u30D6\u30E9\u30A6\u30B6\u3067\u306F\u97F3\u58F0\u8AAD\u307F\u4E0A\u3052\u3092\u4F7F\u3048\u307E\u305B\u3093\u3002";
+}
+async function decodeSharedTtsAudioBuffer(context, arrayBuffer) {
+  return new Promise((resolve, reject) => {
+    context.decodeAudioData(arrayBuffer.slice(0), resolve, reject);
+  });
+}
+async function playSharedTtsBlob(text, blob) {
+  const utteranceToken = (speechState.activeUtteranceToken || 0) + 1;
+  speechState.activeUtteranceToken = utteranceToken;
+  stopSharedTtsPlayback();
+  clearSpeechBootstrapWatcher();
+  const arrayBuffer = await blob.arrayBuffer();
+  const context = ensureSharedTtsAudioContext();
+  if (context) {
+    try {
+      if (context.state !== "running") {
+        await context.resume();
+      }
+      const audioBuffer = await decodeSharedTtsAudioBuffer(context, arrayBuffer);
+      const source = context.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(sharedTtsAudioGainNode || context.destination);
+      activeSharedTtsSource = source;
+      startLipSync(text, {
+        expectedDurationMs: audioBuffer.duration * 1e3,
+        leadMs: 0
+      });
+      if (voiceTools?.voiceStatus) {
+        voiceTools.voiceStatus.textContent = "\u5171\u901ATTS\u3092\u518D\u751F\u4E2D\u3067\u3059\u3002";
+      }
+      source.onended = () => {
+        if (!isCurrentUtteranceToken(utteranceToken)) {
+          return;
+        }
+        stopSharedTtsPlayback();
+        stopLipSync();
+        speechState.activeUtteranceToken = 0;
+        updateVoiceTools();
+      };
+      source.start(0);
+      return;
+    } catch {
+      stopSharedTtsPlayback();
     }
-    return;
+  }
+  activeSharedTtsObjectUrl = URL.createObjectURL(blob);
+  const audio = new Audio(activeSharedTtsObjectUrl);
+  activeSharedTtsAudioElement = audio;
+  audio.preload = "auto";
+  audio.playsInline = true;
+  audio.onended = () => {
+    if (!isCurrentUtteranceToken(utteranceToken)) {
+      return;
+    }
+    stopSharedTtsPlayback();
+    stopLipSync();
+    speechState.activeUtteranceToken = 0;
+    updateVoiceTools();
+  };
+  audio.onerror = () => {
+    if (!isCurrentUtteranceToken(utteranceToken)) {
+      return;
+    }
+    stopSharedTtsPlayback();
+    stopLipSync();
+    speechState.activeUtteranceToken = 0;
+    if (voiceTools?.voiceStatus) {
+      voiceTools.voiceStatus.textContent = "\u5171\u901ATTS\u306E\u518D\u751F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002";
+    }
+  };
+  startLipSync(text, {
+    expectedDurationMs: Math.max(Array.from(String(text || "")).length * 118, 1500),
+    leadMs: 0
+  });
+  if (voiceTools?.voiceStatus) {
+    voiceTools.voiceStatus.textContent = "\u5171\u901ATTS\u3092\u518D\u751F\u4E2D\u3067\u3059\u3002";
+  }
+  await audio.play();
+}
+async function speakWithSharedTts(text) {
+  const response = await fetch("/api/tts", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      text,
+      profile: SHARED_TTS_MODE
+    })
+  });
+  if (!response.ok) {
+    const payload = await parseJsonErrorResponse(response);
+    throw new Error(payload?.error || "Shared TTS request failed.");
+  }
+  await playSharedTtsBlob(text, await response.blob());
+}
+function speakWithBrowserSpeech(text, voiceSettings) {
+  if (!("speechSynthesis" in window)) {
+    throw new Error("\u3053\u306E\u30D6\u30E9\u30A6\u30B6\u3067\u306F\u97F3\u58F0\u8AAD\u307F\u4E0A\u3052\u3092\u4F7F\u3048\u307E\u305B\u3093\u3002");
   }
   refreshAvailableVoices();
   primeSpeechSynthesisOnce();
@@ -40796,7 +40978,7 @@ function speak(text) {
     }
     beginLipSync();
     if (voiceTools?.voiceStatus) {
-      voiceTools.voiceStatus.textContent = "\u8AAD\u307F\u4E0A\u3052\u4E2D\u3067\u3059\u3002";
+      voiceTools.voiceStatus.textContent = "\u30D6\u30E9\u30A6\u30B6\u97F3\u58F0\u3092\u518D\u751F\u4E2D\u3067\u3059\u3002";
     }
   };
   utterance.onboundary = (event) => {
@@ -40830,6 +41012,7 @@ function speak(text) {
   };
   const synth = window.speechSynthesis;
   synth.cancel();
+  stopSharedTtsPlayback();
   try {
     synth.resume();
   } catch {
@@ -40869,6 +41052,38 @@ function speak(text) {
       beginLipSync();
     }
   }, 70);
+}
+async function speak(text) {
+  if (!text) {
+    return;
+  }
+  const voiceSettings = getVoiceSettings();
+  if (!voiceSettings.enabled) {
+    return;
+  }
+  if (isSharedTtsMode(voiceSettings)) {
+    try {
+      await primeSharedTtsAudioOnce();
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+      await speakWithSharedTts(text);
+      return;
+    } catch (error) {
+      console.error(error);
+      if (voiceTools?.voiceStatus) {
+        voiceTools.voiceStatus.textContent = "\u5171\u901ATTS\u306B\u5931\u6557\u3057\u305F\u305F\u3081\u30D6\u30E9\u30A6\u30B6\u97F3\u58F0\u3078\u5207\u308A\u66FF\u3048\u307E\u3059\u3002";
+      }
+    }
+  }
+  try {
+    speakWithBrowserSpeech(text, voiceSettings);
+  } catch (error) {
+    console.error(error);
+    if (voiceTools?.voiceStatus) {
+      voiceTools.voiceStatus.textContent = error?.message || "\u97F3\u58F0\u306E\u518D\u751F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002";
+    }
+  }
 }
 function applyCameraLookAt(cameraRef, lookTargetRef, pitchDownOffset = 0) {
   if (!cameraRef || !lookTargetRef) {

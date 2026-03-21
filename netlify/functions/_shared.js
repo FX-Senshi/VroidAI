@@ -13,6 +13,21 @@ const GROWTH_KEY = "meta/growth.json";
 const fixedModelName = "女の子ver2.vrm";
 const sessionHistoryLimit = 24;
 const modelInputMessageLimit = 18;
+const defaultTtsModel = "gpt-4o-mini-tts";
+const defaultTtsVoice = "shimmer";
+const defaultTtsProfile = "shared-cute";
+const sharedTtsProfiles = {
+  "shared-cute": {
+    id: "shared-cute",
+    label: "共通かわいい",
+    instructions: "Speak in Japanese with a cute, gentle, bright young heroine voice. Keep the pace natural, soft, and easy to understand."
+  },
+  "shared-soft": {
+    id: "shared-soft",
+    label: "共通やわらかい",
+    instructions: "Speak in Japanese with a soft, warm, tender young woman voice. Keep the delivery calm, natural, and friendly."
+  }
+};
 const baseSystemPrompt = [
   "You are a friendly AI avatar inside a web app.",
   "Reply in natural Japanese unless the user clearly prefers another language.",
@@ -101,6 +116,57 @@ function normalizeOpenAiErrorMessage(statusCode, payload) {
   }
 
   return message;
+}
+
+function normalizeTtsErrorMessage(statusCode, payload) {
+  const message = payload?.error?.message || payload?.message || "TTS request failed.";
+
+  if (statusCode === 401 && /incorrect api key/i.test(message)) {
+    return "OpenAI API key is invalid. Check OPENAI_API_KEY in Netlify environment variables.";
+  }
+
+  if (statusCode === 401) {
+    return "OpenAI authentication failed. Check the Netlify environment variables.";
+  }
+
+  if (statusCode === 429) {
+    return "OpenAI TTS rate limit or usage limit was reached. Please wait a little and try again.";
+  }
+
+  return message;
+}
+
+function getTtsModel() {
+  return process.env.TTS_MODEL || defaultTtsModel;
+}
+
+function getTtsVoice() {
+  return process.env.TTS_VOICE || defaultTtsVoice;
+}
+
+function resolveTtsProfile(profileId) {
+  const normalizedProfileId = String(profileId || defaultTtsProfile).trim().toLowerCase();
+  return sharedTtsProfiles[normalizedProfileId] || sharedTtsProfiles[defaultTtsProfile];
+}
+
+async function readJsonLikeErrorPayload(response) {
+  try {
+    const text = await response.text();
+    if (!text) {
+      return null;
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      return {
+        error: {
+          message: text
+        }
+      };
+    }
+  } catch {
+    return null;
+  }
 }
 
 function sanitizeInputMessages(messages) {
@@ -370,6 +436,46 @@ async function requestOpenAi(messages, savedContext = "", growthContext = "") {
   };
 }
 
+async function requestOpenAiTts(text, profileId = defaultTtsProfile) {
+  const profile = resolveTtsProfile(profileId);
+  const payload = {
+    model: getTtsModel(),
+    voice: getTtsVoice(),
+    input: String(text || "").trim()
+  };
+
+  if (profile.instructions) {
+    payload.instructions = profile.instructions;
+  }
+
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY || ""}`
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      payload: await readJsonLikeErrorPayload(response)
+    };
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    body: Buffer.from(await response.arrayBuffer()).toString("base64"),
+    contentType: response.headers.get("content-type") || "audio/mpeg",
+    model: getTtsModel(),
+    voice: getTtsVoice(),
+    profileId: profile.id
+  };
+}
+
 async function appendSessionMessages(event, sessionId, modelName, newMessages) {
   const store = getBlobsStore(event);
   if (!store) {
@@ -504,6 +610,9 @@ async function getStatusPayload(event) {
     return {
       openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+      ttsConfigured: Boolean(process.env.OPENAI_API_KEY),
+      ttsModel: getTtsModel(),
+      ttsVoice: getTtsVoice(),
       memoryImport: unavailableMemoryImport(),
       database: unavailableDatabase(),
       growth: unavailableGrowth(),
@@ -519,6 +628,9 @@ async function getStatusPayload(event) {
   return {
     openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    ttsConfigured: Boolean(process.env.OPENAI_API_KEY),
+    ttsModel: getTtsModel(),
+    ttsVoice: getTtsVoice(),
     memoryImport: unavailableMemoryImport(),
     database: {
       available: true,
@@ -574,9 +686,13 @@ module.exports = {
   unavailableMemoryImport,
   extractOutputText,
   normalizeOpenAiErrorMessage,
+  normalizeTtsErrorMessage,
   sanitizeInputMessages,
   getLatestUserContent,
   requestOpenAi,
+  requestOpenAiTts,
+  getTtsModel,
+  getTtsVoice,
   appendSessionMessages,
   getHistoryPayload,
   getStatusPayload,

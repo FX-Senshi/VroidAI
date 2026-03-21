@@ -20,6 +20,22 @@ const MINIMAL_APP_MODE = false;
 const defaultOpenAiModel = "gpt-4.1-mini";
 const defaultOllamaBaseUrl = "http://127.0.0.1:11434";
 const defaultOllamaModel = "qwen2.5:3b";
+const defaultTtsProvider = "openai";
+const defaultTtsModel = "gpt-4o-mini-tts";
+const defaultTtsVoice = "shimmer";
+const defaultTtsProfile = "shared-cute";
+const sharedTtsProfiles = {
+  "shared-cute": {
+    id: "shared-cute",
+    label: "共通かわいい",
+    instructions: "Speak in Japanese with a cute, gentle, bright young heroine voice. Keep the pace natural, soft, and easy to understand."
+  },
+  "shared-soft": {
+    id: "shared-soft",
+    label: "共通やわらかい",
+    instructions: "Speak in Japanese with a soft, warm, tender young woman voice. Keep the delivery calm, natural, and friendly."
+  }
+};
 const baseSystemPrompt = [
   "You are a friendly AI avatar inside a web app.",
   "Reply in natural Japanese unless the user clearly prefers another language.",
@@ -133,12 +149,37 @@ function getOllamaModel() {
   return process.env.OLLAMA_MODEL || defaultOllamaModel;
 }
 
+function getTtsProvider() {
+  return String(process.env.TTS_PROVIDER || defaultTtsProvider).trim().toLowerCase() || defaultTtsProvider;
+}
+
+function getTtsModel() {
+  return process.env.TTS_MODEL || defaultTtsModel;
+}
+
+function getTtsVoice() {
+  return process.env.TTS_VOICE || defaultTtsVoice;
+}
+
+function resolveTtsProfile(profileId) {
+  const normalizedProfileId = String(profileId || defaultTtsProfile).trim().toLowerCase();
+  return sharedTtsProfiles[normalizedProfileId] || sharedTtsProfiles[defaultTtsProfile];
+}
+
 function getRequestedLlmProvider() {
   return String(process.env.LLM_PROVIDER || "").trim().toLowerCase();
 }
 
 function isOpenAiConfigured() {
   return Boolean(process.env.OPENAI_API_KEY);
+}
+
+function isTtsConfigured() {
+  if (getTtsProvider() === "openai") {
+    return isOpenAiConfigured();
+  }
+
+  return false;
 }
 
 function isOllamaConfigured() {
@@ -298,6 +339,44 @@ function normalizeOllamaErrorMessage(statusCode, payload) {
   }
 
   return message;
+}
+
+function normalizeTtsErrorMessage(statusCode, payload) {
+  const message = payload?.error?.message || payload?.message || "TTS request failed.";
+
+  if (statusCode === 401 && /incorrect api key/i.test(message)) {
+    return "OpenAI API key is invalid for shared TTS. Check OPENAI_API_KEY in .env or .env.local.";
+  }
+
+  if (statusCode === 401) {
+    return "OpenAI authentication failed for shared TTS. Check OPENAI_API_KEY.";
+  }
+
+  if (statusCode === 429) {
+    return "OpenAI TTS rate limit or usage limit was reached. Please wait a little and try again.";
+  }
+
+  return message;
+}
+
+async function readJsonLikeErrorPayload(response) {
+  try {
+    const text = await response.text();
+    if (!text) {
+      return null;
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      return {
+        error: {
+          message: text
+        }
+      };
+    }
+  } catch {
+    return null;
+  }
 }
 
 function extractOllamaText(payload) {
@@ -2003,6 +2082,63 @@ async function requestOpenAiChat(input) {
   }
 }
 
+async function requestOpenAiTts(text, profileId = defaultTtsProfile) {
+  if (!isTtsConfigured()) {
+    return {
+      ok: false,
+      status: 500,
+      error: "OPENAI_API_KEY is not configured for shared TTS."
+    };
+  }
+
+  const profile = resolveTtsProfile(profileId);
+  const requestPayload = {
+    model: getTtsModel(),
+    voice: getTtsVoice(),
+    input: String(text || "").trim()
+  };
+
+  if (profile.instructions) {
+    requestPayload.instructions = profile.instructions;
+  }
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify(requestPayload)
+    });
+
+    if (!response.ok) {
+      const payload = await readJsonLikeErrorPayload(response);
+      return {
+        ok: false,
+        status: response.status,
+        error: normalizeTtsErrorMessage(response.status, payload)
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      audioBuffer: Buffer.from(await response.arrayBuffer()),
+      contentType: response.headers.get("content-type") || "audio/mpeg",
+      model: getTtsModel(),
+      voice: getTtsVoice(),
+      profileId: profile.id
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 502,
+      error: error.message || "OpenAI TTS request failed."
+    };
+  }
+}
+
 async function requestOllamaChat(messages) {
   try {
     const response = await fetch(`${getOllamaBaseUrl()}/api/chat`, {
@@ -2093,6 +2229,10 @@ async function handleStatus(res) {
     llmProvider: provider,
     openaiConfigured: isOpenAiConfigured(),
     openaiModel: getOpenAiModel(),
+    ttsProvider: getTtsProvider(),
+    ttsConfigured: isTtsConfigured(),
+    ttsModel: getTtsModel(),
+    ttsVoice: getTtsVoice(),
     ollamaConfigured: isOllamaConfigured(),
     ollamaModel: getOllamaModel(),
     ollamaBaseUrl: getOllamaBaseUrl(),
@@ -2117,6 +2257,56 @@ async function handleStatus(res) {
     growth: getGrowthStatus(),
     sessionHistoryLimit
   });
+}
+
+async function handleTts(req, res) {
+  try {
+    const rawBody = await readRequestBody(req);
+    const body = rawBody ? JSON.parse(rawBody) : {};
+    const text = String(body.text || "").trim();
+    const profileId = String(body.profile || defaultTtsProfile);
+
+    if (!text) {
+      sendJson(res, 400, { error: "text is required." });
+      return;
+    }
+
+    if (getTtsProvider() !== "openai") {
+      sendJson(res, 400, {
+        error: `Unsupported TTS provider '${getTtsProvider()}'.`,
+        ttsProvider: getTtsProvider()
+      });
+      return;
+    }
+
+    const ttsResult = await requestOpenAiTts(text, profileId);
+    if (!ttsResult.ok) {
+      sendJson(res, ttsResult.status || 500, {
+        error: ttsResult.error || "TTS request failed.",
+        ttsProvider: getTtsProvider(),
+        ttsModel: getTtsModel(),
+        ttsVoice: getTtsVoice()
+      });
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": ttsResult.contentType,
+      "Cache-Control": "no-store",
+      "Content-Length": String(ttsResult.audioBuffer.length),
+      "X-TTS-Provider": getTtsProvider(),
+      "X-TTS-Model": ttsResult.model,
+      "X-TTS-Voice": ttsResult.voice,
+      "X-TTS-Profile": ttsResult.profileId
+    });
+    res.end(ttsResult.audioBuffer);
+  } catch (error) {
+    console.error(error);
+    sendJson(res, 500, {
+      error: error.message || "TTS request failed.",
+      ttsProvider: getTtsProvider()
+    });
+  }
 }
 
 async function handleChat(req, res) {
@@ -2222,6 +2412,11 @@ http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === "/api/tts" && req.method === "POST") {
+    handleTts(req, res);
+    return;
+  }
+
   const relativePath = url.pathname === "/"
     ? "/index.html"
     : url.pathname === "/favicon.ico"
@@ -2255,6 +2450,7 @@ http.createServer(async (req, res) => {
   console.log(`PC browser: http://localhost:${port}`);
   console.log(`Phone browser: http://${ip}:${port}`);
   console.log(`LLM provider: ${provider}`);
+  console.log(`TTS provider: ${getTtsProvider()} (${getTtsModel()} / ${getTtsVoice()})`);
   console.log(`OpenAI key configured: ${isOpenAiConfigured() ? "yes" : "no"}`);
   console.log(`Ollama configured: ${isOllamaConfigured() ? "yes" : "no"} (${getOllamaModel()} @ ${getOllamaBaseUrl()})`);
   if (MINIMAL_APP_MODE) {
