@@ -37614,7 +37614,7 @@ var mobileMenuButton = document.getElementById("mobileMenuButton");
 var mobileMenuBackdrop = document.getElementById("mobileMenuBackdrop");
 var mobileMenuCloseButton = document.getElementById("mobileMenuCloseButton");
 var runtimeSearchParams = new URLSearchParams(window.location.search);
-var BUILD_VERSION = "20260321p";
+var BUILD_VERSION = "20260321q";
 var DEBUG_LIP_SYNC_MODE = runtimeSearchParams.has("debugLipSync");
 var DEBUG_LIP_SYNC_AUTORUN = runtimeSearchParams.has("debugLipSyncAutoRun");
 var FEMALE_VOICE_NAME_PATTERN = /(female|woman|girl|kyoko|nanami|naomi|ayumi|haruka|sayaka|sakura|samantha|zira|aria|jenny|sonia|monica|lucia|hemi|xiaoxiao|huihui|ja-jp nanami|ja-jp haruka)/iu;
@@ -37746,6 +37746,7 @@ var DEFAULT_RELAXED_POSE = {
 };
 var FIXED_MODEL_NAME = "\u5973\u306E\u5B50ver2.vrm";
 var FIXED_MODEL_LITE_ASSET_FILE_NAME = "girlver2-lite.vrm";
+var FIXED_MODEL_MOBILE_ASSET_FILE_NAME = "girlver2-mobile.vrm";
 var FIXED_GIRL_FACE_TEXTURE_FILE = "girlver2-face-base.png";
 var FIXED_GIRL_BODY_TEXTURE_FILE = "girlver2-body-base.png";
 var DEFAULT_CAMERA_ADJUSTMENTS = {
@@ -39204,7 +39205,7 @@ function getModelAssetFileName(fileName) {
   if (!isNetlifyDeployment()) {
     return FIXED_MODEL_LITE_ASSET_FILE_NAME;
   }
-  return shouldPreferLiteFixedModel() ? FIXED_MODEL_LITE_ASSET_FILE_NAME : FIXED_MODEL_NAME;
+  return shouldPreferLiteFixedModel() ? FIXED_MODEL_MOBILE_ASSET_FILE_NAME : FIXED_MODEL_NAME;
 }
 function isFixedGirlFaceMaterial(material) {
   return /Face|Eye/i.test(String(material?.name || ""));
