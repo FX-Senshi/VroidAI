@@ -37614,7 +37614,7 @@ var mobileMenuButton = document.getElementById("mobileMenuButton");
 var mobileMenuBackdrop = document.getElementById("mobileMenuBackdrop");
 var mobileMenuCloseButton = document.getElementById("mobileMenuCloseButton");
 var runtimeSearchParams = new URLSearchParams(window.location.search);
-var BUILD_VERSION = "20260321o";
+var BUILD_VERSION = "20260321p";
 var DEBUG_LIP_SYNC_MODE = runtimeSearchParams.has("debugLipSync");
 var DEBUG_LIP_SYNC_AUTORUN = runtimeSearchParams.has("debugLipSyncAutoRun");
 var FEMALE_VOICE_NAME_PATTERN = /(female|woman|girl|kyoko|nanami|naomi|ayumi|haruka|sayaka|sakura|samantha|zira|aria|jenny|sonia|monica|lucia|hemi|xiaoxiao|huihui|ja-jp nanami|ja-jp haruka)/iu;
@@ -39067,7 +39067,8 @@ async function initViewer() {
     alpha: true,
     powerPreference: "high-performance"
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isNetlifyDeployment() ? 3 : 2));
+  const maxPixelRatio = isNetlifyDeployment() ? shouldPreferLiteFixedModel() ? 2 : 2.5 : 2;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPixelRatio));
   renderer.setSize(stageSize.width, stageSize.height, false);
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.domElement.style.touchAction = "none";
@@ -39186,11 +39187,24 @@ async function loadModel(fileName) {
 function isNetlifyDeployment() {
   return /(?:^|\.)netlify\.app$/i.test(window.location.hostname || "");
 }
+function shouldPreferLiteFixedModel() {
+  const width = Math.min(
+    window.innerWidth || Number.POSITIVE_INFINITY,
+    window.screen?.width || Number.POSITIVE_INFINITY
+  );
+  const userAgent = navigator.userAgent || "";
+  const isMobileUa = /iPhone|iPad|iPod|Android|Mobile/i.test(userAgent);
+  const lowMemory = typeof navigator.deviceMemory === "number" && navigator.deviceMemory <= 4;
+  return width <= 979 || isMobileUa || lowMemory;
+}
 function getModelAssetFileName(fileName) {
   if (fileName !== FIXED_MODEL_NAME) {
     return fileName;
   }
-  return isNetlifyDeployment() ? FIXED_MODEL_NAME : FIXED_MODEL_LITE_ASSET_FILE_NAME;
+  if (!isNetlifyDeployment()) {
+    return FIXED_MODEL_LITE_ASSET_FILE_NAME;
+  }
+  return shouldPreferLiteFixedModel() ? FIXED_MODEL_LITE_ASSET_FILE_NAME : FIXED_MODEL_NAME;
 }
 function isFixedGirlFaceMaterial(material) {
   return /Face|Eye/i.test(String(material?.name || ""));
