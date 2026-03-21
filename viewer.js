@@ -37614,7 +37614,7 @@ var mobileMenuButton = document.getElementById("mobileMenuButton");
 var mobileMenuBackdrop = document.getElementById("mobileMenuBackdrop");
 var mobileMenuCloseButton = document.getElementById("mobileMenuCloseButton");
 var runtimeSearchParams = new URLSearchParams(window.location.search);
-var BUILD_VERSION = "20260321n";
+var BUILD_VERSION = "20260321o";
 var DEBUG_LIP_SYNC_MODE = runtimeSearchParams.has("debugLipSync");
 var DEBUG_LIP_SYNC_AUTORUN = runtimeSearchParams.has("debugLipSyncAutoRun");
 var FEMALE_VOICE_NAME_PATTERN = /(female|woman|girl|kyoko|nanami|naomi|ayumi|haruka|sayaka|sakura|samantha|zira|aria|jenny|sonia|monica|lucia|hemi|xiaoxiao|huihui|ja-jp nanami|ja-jp haruka)/iu;
@@ -37692,8 +37692,8 @@ var CAMERA_HORIZONTAL_RANGE_FALLBACK = { min: -1.2, max: 1.2 };
 var MOBILE_STAGE_BREAKPOINT = 680;
 var MOBILE_PROJECTED_X_TARGET = -0.42;
 var MOBILE_MODEL_YAW_OFFSET = MathUtils.degToRad(8);
-var MOBILE_MODEL_PITCH_OFFSET = MathUtils.degToRad(3);
-var CAMERA_PITCH_DOWN_OFFSET = MathUtils.degToRad(-1);
+var MOBILE_MODEL_PITCH_OFFSET = 0;
+var CAMERA_PITCH_DOWN_OFFSET = 0;
 var MODEL_ROOT_ROTATION_OVERRIDES = {
   "\u5973\u306E\u5B50ver2.vrm": {
     yaw: 0,
@@ -37745,7 +37745,7 @@ var DEFAULT_RELAXED_POSE = {
   rightHand: { x: 0, y: 0, z: 0 }
 };
 var FIXED_MODEL_NAME = "\u5973\u306E\u5B50ver2.vrm";
-var FIXED_MODEL_ASSET_FILE_NAME = "girlver2-lite.vrm";
+var FIXED_MODEL_LITE_ASSET_FILE_NAME = "girlver2-lite.vrm";
 var FIXED_GIRL_FACE_TEXTURE_FILE = "girlver2-face-base.png";
 var FIXED_GIRL_BODY_TEXTURE_FILE = "girlver2-body-base.png";
 var DEFAULT_CAMERA_ADJUSTMENTS = {
@@ -37947,6 +37947,8 @@ var voiceTools = null;
 var availableVoices = [];
 var lipSyncDebugPre = null;
 var cameraToolRanges = /* @__PURE__ */ new Map();
+var speechSynthesisPrimed = false;
+var speechPrimeListenerAttached = false;
 var mouthDiagnosticState = {
   active: false,
   startedAtMs: 0
@@ -38098,6 +38100,7 @@ chatForm?.addEventListener("submit", async (event) => {
   sendButton.disabled = true;
   sendButton.textContent = "\u9001\u4FE1\u4E2D...";
   setThinkingMotion();
+  primeSpeechSynthesisOnce();
   try {
     const response = await fetch("/api/chat", {
       method: "POST",
@@ -38691,27 +38694,56 @@ function updateCameraTools() {
   cameraTools.distanceValue.textContent = formatSignedValue(nextDistanceValue);
   cameraTools.horizontalValue.textContent = formatSignedValue(nextHorizontalValue);
 }
+function primeSpeechSynthesisOnce() {
+  if (!("speechSynthesis" in window) || speechSynthesisPrimed) {
+    return;
+  }
+  const synth = window.speechSynthesis;
+  try {
+    synth.resume();
+    const unlockUtterance = new SpeechSynthesisUtterance("\u200B");
+    unlockUtterance.volume = 0;
+    unlockUtterance.rate = 1;
+    unlockUtterance.pitch = 1;
+    unlockUtterance.lang = "ja-JP";
+    speechSynthesisPrimed = true;
+    synth.speak(unlockUtterance);
+    window.setTimeout(() => {
+      try {
+        synth.cancel();
+      } catch {
+      }
+    }, 40);
+  } catch {
+    speechSynthesisPrimed = false;
+  }
+  refreshAvailableVoices();
+}
+function attachSpeechPrimeListeners() {
+  if (speechPrimeListenerAttached) {
+    return;
+  }
+  speechPrimeListenerAttached = true;
+  const primeSpeech = () => {
+    primeSpeechSynthesisOnce();
+  };
+  window.addEventListener("pointerdown", primeSpeech, { passive: true, once: true });
+  window.addEventListener("touchstart", primeSpeech, { passive: true, once: true });
+  window.addEventListener("click", primeSpeech, { passive: true, once: true });
+}
 function initSpeechSupport() {
   if (!("speechSynthesis" in window)) {
     updateVoiceTools();
     return;
   }
   refreshAvailableVoices();
+  attachSpeechPrimeListeners();
   const synth = window.speechSynthesis;
   if (typeof synth.addEventListener === "function") {
     synth.addEventListener("voiceschanged", refreshAvailableVoices);
   } else {
     synth.onvoiceschanged = refreshAvailableVoices;
   }
-  const primeSpeech = () => {
-    try {
-      synth.resume();
-      refreshAvailableVoices();
-    } catch {
-    }
-  };
-  window.addEventListener("pointerdown", primeSpeech, { passive: true, once: true });
-  window.addEventListener("touchstart", primeSpeech, { passive: true, once: true });
 }
 function getCuteVoicePriority(voice) {
   const haystack = `${voice?.name || ""} ${voice?.voiceURI || ""}`.trim();
@@ -39035,7 +39067,7 @@ async function initViewer() {
     alpha: true,
     powerPreference: "high-performance"
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isNetlifyDeployment() ? 3 : 2));
   renderer.setSize(stageSize.width, stageSize.height, false);
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.domElement.style.touchAction = "none";
@@ -39139,7 +39171,8 @@ async function loadModel(fileName) {
   currentModel = fileName;
   fitAvatarToView(currentSceneRoot, camera, lookTarget, fileName);
   scene.add(currentSceneRoot);
-  if (fileName === FIXED_MODEL_NAME) {
+  enhanceModelTextureQuality(currentSceneRoot, app?.renderer);
+  if (fileName === FIXED_MODEL_NAME && getModelAssetFileName(fileName) !== fileName) {
     upgradeFixedGirlBaseTextures(currentSceneRoot);
   }
   updateCameraTools();
@@ -39150,8 +39183,14 @@ async function loadModel(fileName) {
     }, 600);
   }
 }
+function isNetlifyDeployment() {
+  return /(?:^|\.)netlify\.app$/i.test(window.location.hostname || "");
+}
 function getModelAssetFileName(fileName) {
-  return fileName === FIXED_MODEL_NAME ? FIXED_MODEL_ASSET_FILE_NAME : fileName;
+  if (fileName !== FIXED_MODEL_NAME) {
+    return fileName;
+  }
+  return isNetlifyDeployment() ? FIXED_MODEL_NAME : FIXED_MODEL_LITE_ASSET_FILE_NAME;
 }
 function isFixedGirlFaceMaterial(material) {
   return /Face|Eye/i.test(String(material?.name || ""));
@@ -39202,6 +39241,36 @@ async function ensureFixedGirlBaseTextures() {
   }
   return fixedGirlTextureState.pending;
 }
+function enhanceModelTextureQuality(root, rendererRef) {
+  if (!root || !rendererRef) {
+    return;
+  }
+  const maxAnisotropy = Math.min(
+    rendererRef.capabilities?.getMaxAnisotropy?.() || 1,
+    isNetlifyDeployment() ? 12 : 8
+  );
+  root.traverse((object) => {
+    if (!object?.isMesh || !object.material) {
+      return;
+    }
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) {
+      for (const key of ["map", "emissiveMap", "normalMap", "roughnessMap", "metalnessMap", "alphaMap"]) {
+        const texture = material?.[key];
+        if (!texture?.isTexture) {
+          continue;
+        }
+        texture.anisotropy = Math.max(texture.anisotropy || 1, maxAnisotropy);
+        texture.magFilter = LinearFilter;
+        if (texture.generateMipmaps !== false) {
+          texture.minFilter = LinearMipmapLinearFilter;
+        }
+        texture.needsUpdate = true;
+      }
+      material.needsUpdate = true;
+    }
+  });
+}
 async function upgradeFixedGirlBaseTextures(root) {
   try {
     const { face, body } = await ensureFixedGirlBaseTextures();
@@ -39223,6 +39292,7 @@ async function upgradeFixedGirlBaseTextures(root) {
         }
       }
     });
+    enhanceModelTextureQuality(root, app?.renderer);
   } catch (error) {
     console.warn("upgradeFixedGirlBaseTextures failed", error);
   }
@@ -40656,12 +40726,19 @@ function speak(text) {
     return;
   }
   refreshAvailableVoices();
+  primeSpeechSynthesisOnce();
   const voice = getPreferredSpeechVoice(voiceSettings);
   const speechProfile = getCuteSpeechProfile(voice);
   const rate = speechProfile.rate;
   const utterance = new SpeechSynthesisUtterance(text);
   const utteranceToken = (speechState.activeUtteranceToken || 0) + 1;
   speechState.activeUtteranceToken = utteranceToken;
+  const resumeTimerIds = [];
+  const clearResumeTimers = () => {
+    while (resumeTimerIds.length) {
+      window.clearTimeout(resumeTimerIds.pop());
+    }
+  };
   let lipSyncBootstrapped = false;
   clearSpeechBootstrapWatcher();
   const beginLipSync = () => {
@@ -40697,6 +40774,7 @@ function speak(text) {
     if (!isCurrentUtteranceToken(utteranceToken)) {
       return;
     }
+    clearResumeTimers();
     clearSpeechBootstrapWatcher();
     stopLipSync();
     speechState.activeUtteranceToken = 0;
@@ -40706,6 +40784,7 @@ function speak(text) {
     if (!isCurrentUtteranceToken(utteranceToken)) {
       return;
     }
+    clearResumeTimers();
     clearSpeechBootstrapWatcher();
     stopLipSync();
     speechState.activeUtteranceToken = 0;
@@ -40715,6 +40794,17 @@ function speak(text) {
   };
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);
+  for (const delayMs of [0, 140, 420, 900]) {
+    resumeTimerIds.push(window.setTimeout(() => {
+      if (!isCurrentUtteranceToken(utteranceToken)) {
+        return;
+      }
+      try {
+        window.speechSynthesis.resume();
+      } catch {
+      }
+    }, delayMs));
+  }
   const bootstrapWatchStartedAtMs = performance.now();
   speechState.bootstrapWatcherId = window.setInterval(() => {
     if (!isCurrentUtteranceToken(utteranceToken)) {
