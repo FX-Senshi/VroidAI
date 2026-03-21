@@ -37614,7 +37614,7 @@ var mobileMenuButton = document.getElementById("mobileMenuButton");
 var mobileMenuBackdrop = document.getElementById("mobileMenuBackdrop");
 var mobileMenuCloseButton = document.getElementById("mobileMenuCloseButton");
 var runtimeSearchParams = new URLSearchParams(window.location.search);
-var BUILD_VERSION = "20260321q";
+var BUILD_VERSION = "20260321r";
 var DEBUG_LIP_SYNC_MODE = runtimeSearchParams.has("debugLipSync");
 var DEBUG_LIP_SYNC_AUTORUN = runtimeSearchParams.has("debugLipSyncAutoRun");
 var FEMALE_VOICE_NAME_PATTERN = /(female|woman|girl|kyoko|nanami|naomi|ayumi|haruka|sayaka|sakura|samantha|zira|aria|jenny|sonia|monica|lucia|hemi|xiaoxiao|huihui|ja-jp nanami|ja-jp haruka)/iu;
@@ -37720,11 +37720,11 @@ var RELAXED_POSE_OVERRIDES = {
 };
 var RELAXED_UPPER_BODY_OVERRIDES = {
   "\u5973\u306E\u5B50ver2.vrm": {
-    spineX: 5e-3,
-    chestX: -0.01,
-    neckX: -0.072,
-    headX: -0.036,
-    nodScale: 0.42
+    spineX: 0.01,
+    chestX: 4e-3,
+    neckX: 0.018,
+    headX: 0.01,
+    nodScale: 0.34
   }
 };
 var DEFAULT_RELAXED_UPPER_BODY = {
@@ -38731,6 +38731,10 @@ function attachSpeechPrimeListeners() {
   window.addEventListener("pointerdown", primeSpeech, { passive: true, once: true });
   window.addEventListener("touchstart", primeSpeech, { passive: true, once: true });
   window.addEventListener("click", primeSpeech, { passive: true, once: true });
+  sendButton?.addEventListener("pointerdown", primeSpeech, { passive: true });
+  sendButton?.addEventListener("touchstart", primeSpeech, { passive: true });
+  chatInput?.addEventListener("focus", primeSpeech, { passive: true });
+  chatInput?.addEventListener("touchstart", primeSpeech, { passive: true });
 }
 function initSpeechSupport() {
   if (!("speechSynthesis" in window)) {
@@ -38938,11 +38942,26 @@ function getPreferredSpeechVoice(settings = getVoiceSettings()) {
   );
   return bestCuteVoice || selectableVoices[0] || availableVoices[0] || null;
 }
+function isMobileAppleWebKit() {
+  const userAgent = navigator.userAgent || "";
+  const isiOS = /iPhone|iPad|iPod/i.test(userAgent);
+  const isSafariEngine = /Safari/i.test(userAgent) && !/CriOS|FxiOS|EdgiOS|OPiOS|YaBrowser/i.test(userAgent);
+  return isiOS && isSafariEngine;
+}
+function shouldUseSystemSpeechVoice() {
+  return isMobileAppleWebKit();
+}
 function getCuteSpeechProfile(voice) {
   const haystack = `${voice?.name || ""} ${voice?.voiceURI || ""}`.trim();
   const japaneseVoice = /^ja\b/i.test(voice?.lang || "");
   const likelyFemale = isLikelyFemaleVoice(voice || {});
   const topPriorityCute = CUTE_VOICE_NAME_PRIORITY.slice(0, 4).some((pattern) => pattern.test(haystack));
+  if (shouldUseSystemSpeechVoice()) {
+    return {
+      rate: 0.92,
+      pitch: 1.48
+    };
+  }
   return {
     rate: topPriorityCute ? 0.84 : japaneseVoice ? likelyFemale ? 0.88 : 0.9 : CUTE_VOICE_RATE,
     pitch: topPriorityCute ? 2.02 : japaneseVoice && likelyFemale ? 1.94 : likelyFemale ? CUTE_VOICE_PITCH : 1.72
@@ -40742,7 +40761,9 @@ function speak(text) {
   }
   refreshAvailableVoices();
   primeSpeechSynthesisOnce();
-  const voice = getPreferredSpeechVoice(voiceSettings);
+  const selectedVoice = getPreferredSpeechVoice(voiceSettings);
+  const useSystemVoice = shouldUseSystemSpeechVoice();
+  const voice = useSystemVoice ? null : selectedVoice;
   const speechProfile = getCuteSpeechProfile(voice);
   const rate = speechProfile.rate;
   const utterance = new SpeechSynthesisUtterance(text);
@@ -40764,7 +40785,7 @@ function speak(text) {
     clearSpeechBootstrapWatcher();
     startLipSync(text, rate);
   };
-  utterance.lang = voice?.lang || "ja-JP";
+  utterance.lang = selectedVoice?.lang || "ja-JP";
   utterance.voice = voice || null;
   utterance.rate = rate;
   utterance.pitch = speechProfile.pitch;
@@ -40807,15 +40828,20 @@ function speak(text) {
       voiceTools.voiceStatus.textContent = "\u97F3\u58F0\u306E\u518D\u751F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002";
     }
   };
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utterance);
+  const synth = window.speechSynthesis;
+  synth.cancel();
+  try {
+    synth.resume();
+  } catch {
+  }
+  synth.speak(utterance);
   for (const delayMs of [0, 140, 420, 900]) {
     resumeTimerIds.push(window.setTimeout(() => {
       if (!isCurrentUtteranceToken(utteranceToken)) {
         return;
       }
       try {
-        window.speechSynthesis.resume();
+        synth.resume();
       } catch {
       }
     }, delayMs));
@@ -40827,11 +40853,17 @@ function speak(text) {
       return;
     }
     const waitedMs = performance.now() - bootstrapWatchStartedAtMs;
-    if (window.speechSynthesis.speaking) {
+    if (synth.speaking) {
       if (waitedMs > 120) {
         beginLipSync();
       }
       return;
+    }
+    if (useSystemVoice && waitedMs > 520 && waitedMs < 900) {
+      try {
+        synth.resume();
+      } catch {
+      }
     }
     if (waitedMs > 2200) {
       beginLipSync();
