@@ -37614,7 +37614,7 @@ var mobileMenuButton = document.getElementById("mobileMenuButton");
 var mobileMenuBackdrop = document.getElementById("mobileMenuBackdrop");
 var mobileMenuCloseButton = document.getElementById("mobileMenuCloseButton");
 var runtimeSearchParams = new URLSearchParams(window.location.search);
-var BUILD_VERSION = "20260321b";
+var BUILD_VERSION = "20260321n";
 var DEBUG_LIP_SYNC_MODE = runtimeSearchParams.has("debugLipSync");
 var DEBUG_LIP_SYNC_AUTORUN = runtimeSearchParams.has("debugLipSyncAutoRun");
 var FEMALE_VOICE_NAME_PATTERN = /(female|woman|girl|kyoko|nanami|naomi|ayumi|haruka|sayaka|sakura|samantha|zira|aria|jenny|sonia|monica|lucia|hemi|xiaoxiao|huihui|ja-jp nanami|ja-jp haruka)/iu;
@@ -37630,8 +37630,8 @@ var CUTE_VOICE_NAME_PRIORITY = [
   /naomi/iu,
   /zira|aria|jenny|sonia|monica|lucia|hemi|xiaoxiao|huihui/iu
 ];
-var CUTE_VOICE_RATE = 1.04;
-var CUTE_VOICE_PITCH = 1.16;
+var CUTE_VOICE_RATE = 0.88;
+var CUTE_VOICE_PITCH = 1.92;
 var MODEL_CAMERA_OVERRIDES = {
   "ojisan.vrm": {
     targetYFactor: 0.23,
@@ -37685,7 +37685,7 @@ var DEFAULT_CAMERA = {
 var CHAT_SESSION_STORAGE_KEY = "vroid-chat-session-v1";
 var SELECTED_MODEL_STORAGE_KEY = "vroid-selected-model-v1";
 var CAMERA_ADJUSTMENTS_STORAGE_KEY = "vroid-camera-adjustments-v9";
-var VOICE_SETTINGS_STORAGE_KEY = "vroid-voice-settings-v1";
+var VOICE_SETTINGS_STORAGE_KEY = "vroid-voice-settings-v2";
 var CAMERA_HEIGHT_RANGE_FALLBACK = { min: -1.8, max: 1.2 };
 var CAMERA_DISTANCE_RANGE_FALLBACK = { min: -3.4, max: 1.8 };
 var CAMERA_HORIZONTAL_RANGE_FALLBACK = { min: -1.2, max: 1.2 };
@@ -37802,17 +37802,16 @@ var MAX_VISEME_PEAK = 0.82;
 var MAX_VISEME_TOTAL = 1.08;
 var FIXED_GIRL_MAX_VISEME_PEAK = 1.52;
 var FIXED_GIRL_MAX_VISEME_TOTAL = 2.18;
-var FIXED_GIRL_LIVE_DOMINANT_BOOST = 0.42;
 var FIXED_GIRL_LIVE_FRAME_DIRECT_FLOOR = 0.62;
 var FIXED_GIRL_LIVE_FRAME_NEXT_FLOOR = 0.34;
 var FIXED_GIRL_DISABLE_BOUNDARY_SYNC = false;
-var FIXED_GIRL_FALLBACK_TIMING_SCALE = 1.66;
-var FIXED_GIRL_FALLBACK_CHAR_DURATION_MS = 170;
-var FIXED_GIRL_SPEECH_LEAD_MS = 0;
+var FIXED_GIRL_FALLBACK_TIMING_SCALE = 0.78;
+var FIXED_GIRL_FALLBACK_CHAR_DURATION_MS = 84;
+var FIXED_GIRL_SPEECH_LEAD_MS = 104;
 var FIXED_GIRL_SILENT_NEXT_BLEND = 0;
-var FIXED_GIRL_SPEECH_DIRECT_LIMIT = 0.9;
-var FIXED_GIRL_SPEECH_DROP_LIMIT = 0.5;
-var FIXED_GIRL_SPEECH_LIFT_LIMIT = 0.12;
+var FIXED_GIRL_SPEECH_DIRECT_LIMIT = 0.66;
+var FIXED_GIRL_SPEECH_DROP_LIMIT = 0.3;
+var FIXED_GIRL_SPEECH_LIFT_LIMIT = 0.09;
 var FIXED_GIRL_SPEECH_SURPRISED_LIMIT = 0.02;
 var FIXED_GIRL_SPEECH_POSE_MAP = {
   aa: {
@@ -37969,6 +37968,8 @@ var speechState = {
   lastBoundaryFrameIndex: -1,
   lastBoundaryStrength: 0,
   lastKnownSpeechElapsedMs: 0,
+  lastApplyAtMs: 0,
+  lastApplyDeltaSec: 1 / 60,
   activeUtteranceToken: 0,
   visemeValues: Object.fromEntries(MOUTH_VISEMES.map((viseme) => [viseme, 0])),
   directMorphValues: Object.fromEntries(MOUTH_VISEMES.map((viseme) => [viseme, 0])),
@@ -38899,7 +38900,20 @@ function getPreferredSpeechVoice(settings = getVoiceSettings()) {
   if (selectedVoice) {
     return selectedVoice;
   }
-  return selectableVoices[0] || availableVoices[0] || null;
+  const bestCuteVoice = selectableVoices.find(
+    (voice) => getCuteVoicePriority(voice) < CUTE_VOICE_NAME_PRIORITY.length
+  );
+  return bestCuteVoice || selectableVoices[0] || availableVoices[0] || null;
+}
+function getCuteSpeechProfile(voice) {
+  const haystack = `${voice?.name || ""} ${voice?.voiceURI || ""}`.trim();
+  const japaneseVoice = /^ja\b/i.test(voice?.lang || "");
+  const likelyFemale = isLikelyFemaleVoice(voice || {});
+  const topPriorityCute = CUTE_VOICE_NAME_PRIORITY.slice(0, 4).some((pattern) => pattern.test(haystack));
+  return {
+    rate: topPriorityCute ? 0.84 : japaneseVoice ? likelyFemale ? 0.88 : 0.9 : CUTE_VOICE_RATE,
+    pitch: topPriorityCute ? 2.02 : japaneseVoice && likelyFemale ? 1.94 : likelyFemale ? CUTE_VOICE_PITCH : 1.72
+  };
 }
 function applyCurrentCameraFrame() {
   if (!app || !currentSceneRoot || !currentModel) {
@@ -39064,7 +39078,7 @@ async function initViewer() {
     const elapsed = clock.elapsedTime;
     if (currentVrm) {
       applyRelaxedPose(currentVrm, elapsed);
-      applyConversationMotion(currentVrm, elapsed);
+      applyConversationMotion(currentVrm, elapsed, delta);
       applyConversationExpression(currentVrm, elapsed, delta);
       applyBlink(currentVrm, elapsed);
       applyLipSync(currentVrm);
@@ -39428,16 +39442,17 @@ function compressLipSyncTargets(targetValues) {
     targetValues[viseme] = (targetValues[viseme] || 0) * scale;
   }
 }
-function mergeLipSyncFrames(frames) {
+function mergeLipSyncFrames(frames, options = {}) {
   if (!Array.isArray(frames) || frames.length <= 1) {
     return frames || [];
   }
+  const preserveNonSilentFrames = Boolean(options.preserveNonSilentFrames);
   const merged = [];
   for (const frame of frames) {
     const previous = merged[merged.length - 1];
     const currentSilent = isSilentLipSyncFrame(frame);
     const previousSilent = isSilentLipSyncFrame(previous);
-    const shouldMerge = previous && (currentSilent && previousSilent || !currentSilent && !previousSilent && previous.viseme === frame.viseme);
+    const shouldMerge = previous && (currentSilent && previousSilent || !preserveNonSilentFrames && !currentSilent && !previousSilent && previous.viseme === frame.viseme);
     if (!shouldMerge) {
       merged.push({ ...frame });
       continue;
@@ -39471,6 +39486,11 @@ function resetLiveSpeechMorphTargets() {
 }
 function isCurrentUtteranceToken(token) {
   return Boolean(token) && speechState.activeUtteranceToken === token;
+}
+function normalizeLipSyncBlend(blend, deltaSec = speechState.lastApplyDeltaSec || 1 / 60) {
+  const clampedBlend = MathUtils.clamp(blend, 0, 0.999);
+  const frameScale = MathUtils.clamp((deltaSec || 1 / 60) * 60, 0.35, 2.4);
+  return 1 - Math.pow(1 - clampedBlend, frameScale);
 }
 function collectMorphTargetBindings(root) {
   const bindings = /* @__PURE__ */ new Map();
@@ -39515,7 +39535,7 @@ function setDirectSpeechMorphValue(viseme, targetValue, blendUp = 0.18, blendDow
   }
   const currentValue = speechState.directMorphValues[viseme] || 0;
   const clampedTarget = MathUtils.clamp(targetValue, 0, DIRECT_MORPH_INFLUENCE_LIMIT);
-  const blend = clampedTarget > currentValue ? blendUp : blendDown;
+  const blend = normalizeLipSyncBlend(clampedTarget > currentValue ? blendUp : blendDown);
   const nextValue = MathUtils.lerp(currentValue, clampedTarget, blend);
   speechState.directMorphValues[viseme] = nextValue < 1e-3 ? 0 : nextValue;
   setMorphTargetValue(targetNames, speechState.directMorphValues[viseme]);
@@ -39527,7 +39547,7 @@ function setDirectSupportMorphValue(key, targetValue, blendUp = 0.22, blendDown 
   }
   const currentValue = speechState.supportValues[key] || 0;
   const clampedTarget = MathUtils.clamp(targetValue, 0, DIRECT_MORPH_INFLUENCE_LIMIT);
-  const blend = clampedTarget > currentValue ? blendUp : blendDown;
+  const blend = normalizeLipSyncBlend(clampedTarget > currentValue ? blendUp : blendDown);
   const nextValue = MathUtils.lerp(currentValue, clampedTarget, blend);
   speechState.supportValues[key] = nextValue < 1e-3 ? 0 : nextValue;
   setMorphTargetValue(targetNames, speechState.supportValues[key]);
@@ -39615,36 +39635,38 @@ function applyDirectMouthMorphFallback(vrmRef = currentVrm) {
     const openCurve = Math.sin(
       Math.PI * MathUtils.clamp(currentSpeechProgress * 0.88 + 0.06, 0, 1)
     );
-    const crossFadeToNext = currentSpeechFrame ? currentSpeechSilent ? MathUtils.smoothstep(currentSpeechProgress, 0.97, 1) : MathUtils.smoothstep(currentSpeechProgress, 0.66, 0.94) : 0;
+    const crossFadeToNext = currentSpeechFrame ? currentSpeechSilent ? MathUtils.smoothstep(currentSpeechProgress, 0.95, 1) : MathUtils.smootherstep(currentSpeechProgress, 0.04, 0.24) : 0;
+    const currentPoseBlend = currentSpeechSilent ? 0 : MathUtils.clamp(1 - crossFadeToNext * 0.98, 0.06, 1);
+    const nextPoseBlend = currentSpeechSilent ? 0 : MathUtils.clamp(Math.max(crossFadeToNext, MathUtils.smoothstep(currentSpeechProgress, 0.02, 0.18)), 0, 1);
     const directTargets = Object.fromEntries(MOUTH_VISEMES.map((viseme) => [viseme, 0]));
     const supportTargets = { open: 0, drop: 0, lift: 0, surprised: 0 };
-    const speechDirectGain = currentSpeechSilent ? 1 : 1.12;
-    const speechOpenGain = currentSpeechSilent ? 1 : 1.02;
-    const speechDropGain = currentSpeechSilent ? 1 : 1.04;
-    const speechLiftGain = currentSpeechSilent ? 1 : 0.78;
+    const speechDirectGain = currentSpeechSilent ? 1 : 0.98;
+    const speechOpenGain = currentSpeechSilent ? 1 : 0.88;
+    const speechDropGain = currentSpeechSilent ? 1 : 0.86;
+    const speechLiftGain = currentSpeechSilent ? 1 : 0.74;
     const currentPose = currentSpeechFrame?.viseme ? FIXED_GIRL_SPEECH_POSE_MAP[currentSpeechFrame.viseme] : null;
     const nextPose = nextSpeechFrame?.viseme && !isSilentLipSyncFrame(nextSpeechFrame) ? FIXED_GIRL_SPEECH_POSE_MAP[nextSpeechFrame.viseme] : null;
     const currentPoseWeight = currentPose ? MathUtils.clamp(
-      0.12 + (currentSpeechFrame.strength || 0) * (0.62 + openCurve * 0.34),
-      0.12,
-      0.72
+      (0.16 + (currentSpeechFrame.strength || 0) * (0.84 + openCurve * 0.24)) * currentPoseBlend,
+      0,
+      0.68
     ) : 0;
     const nextPoseWeight = nextPose ? MathUtils.clamp(
-      (nextSpeechFrame.strength || 0) * crossFadeToNext * 0.66 + crossFadeToNext * 0.02,
+      ((nextSpeechFrame.strength || 0) * 1.14 + 0.14) * nextPoseBlend,
       0,
-      0.28
+      0.44
     ) : 0;
     const fixedGirlSpeechIntensity = MathUtils.clamp(
       Math.max(
-        currentPoseWeight * 0.92 + nextPoseWeight * 0.38,
-        liveDirectPeak * 0.96,
-        liveSupportPeak * 0.88
+        currentPoseWeight * 1.04 + nextPoseWeight * 0.48,
+        liveDirectPeak * 0.72,
+        liveSupportPeak * 0.58
       ),
       0,
       1
     );
     const fixedGirlOpenStrength = MathUtils.clamp(
-      currentPoseWeight * 0.72 + nextPoseWeight * 0.28 + liveDirectPeak * 0.52 + liveSupportPeak * 0.18,
+      currentPoseWeight * 0.5 + nextPoseWeight * 0.22 + liveDirectPeak * 0.24 + liveSupportPeak * 0.1,
       0,
       1
     );
@@ -39668,20 +39690,20 @@ function applyDirectMouthMorphFallback(vrmRef = currentVrm) {
     }
     if (currentSpeechFrame?.viseme && currentPoseWeight > 1e-3) {
       directTargets[currentSpeechFrame.viseme] = Math.max(
-        directTargets[currentSpeechFrame.viseme] + currentPoseWeight * FIXED_GIRL_LIVE_DOMINANT_BOOST,
-        0.03 + currentPoseWeight * 0.14
+        directTargets[currentSpeechFrame.viseme] + currentPoseWeight * 0.1,
+        0.016 + currentPoseWeight * 0.06
       );
     }
     for (const viseme of MOUTH_VISEMES) {
       directTargets[viseme] = Math.max(
         directTargets[viseme] * speechDirectGain,
-        (speechState.liveDirectTargets[viseme] || 0) * 1.54
+        (speechState.liveDirectTargets[viseme] || 0) * 0.94
       );
     }
     supportTargets.open *= speechOpenGain;
-    supportTargets.drop = Math.max(supportTargets.drop * speechDropGain, (speechState.liveSupportTargets.drop || 0) * 1.08);
-    supportTargets.lift = Math.max(supportTargets.lift * speechLiftGain, (speechState.liveSupportTargets.lift || 0) * 0.76);
-    supportTargets.surprised = Math.max(supportTargets.surprised, (speechState.liveSupportTargets.surprised || 0) * 0.74);
+    supportTargets.drop = Math.max(supportTargets.drop * speechDropGain, (speechState.liveSupportTargets.drop || 0) * 0.88);
+    supportTargets.lift = Math.max(supportTargets.lift * speechLiftGain, (speechState.liveSupportTargets.lift || 0) * 0.74);
+    supportTargets.surprised = Math.max(supportTargets.surprised, (speechState.liveSupportTargets.surprised || 0) * 0.54);
     for (const viseme of MOUTH_VISEMES) {
       setDirectSpeechMorphValue(
         viseme,
@@ -39690,20 +39712,20 @@ function applyDirectMouthMorphFallback(vrmRef = currentVrm) {
           0,
           FIXED_GIRL_SPEECH_DIRECT_LIMIT
         ),
-        0.28,
-        0.32
+        0.76,
+        0.64
       );
     }
     const finalDropValue2 = MathUtils.clamp(
       Math.max(
-        supportTargets.drop + fixedGirlOpenStrength * 0.1,
-        fixedGirlSpeechIntensity > 0.012 ? 0.015 + currentPoseWeight * 0.04 : 0
+        supportTargets.drop + fixedGirlOpenStrength * 0.08,
+        fixedGirlSpeechIntensity > 0.012 ? 0.01 + currentPoseWeight * 0.03 : 0
       ),
       0,
       FIXED_GIRL_SPEECH_DROP_LIMIT
     );
     const finalLiftValue2 = MathUtils.clamp(
-      supportTargets.lift + fixedGirlOpenStrength * 0.02,
+      supportTargets.lift + fixedGirlOpenStrength * 0.012,
       0,
       FIXED_GIRL_SPEECH_LIFT_LIMIT
     );
@@ -39711,16 +39733,16 @@ function applyDirectMouthMorphFallback(vrmRef = currentVrm) {
     setDirectSupportMorphValue(
       "open",
       Math.max(
-        supportTargets.open + fixedGirlOpenStrength * 0.04,
-        fixedGirlSpeechIntensity > 0.012 ? 4e-3 + currentPoseWeight * 0.018 : 0
+        supportTargets.open + fixedGirlOpenStrength * 8e-3,
+        fixedGirlSpeechIntensity > 0.012 ? 1e-3 + currentPoseWeight * 6e-3 : 0
       ),
-      0.16,
-      0.26
+      0.72,
+      0.6
     );
-    setDirectSupportMorphValue("drop", finalDropValue2, 0.2, 0.28);
-    setDirectSupportMorphValue("lift", finalLiftValue2, 0.18, 0.24);
-    setDirectSupportMorphValue("surprised", finalSurprisedValue2, 0.16, 0.28);
-    setDirectSupportMorphValue("close", fixedGirlSpeechIntensity > 0.012 ? 0 : 0.08, 0.26, 0.4);
+    setDirectSupportMorphValue("drop", finalDropValue2, 0.7, 0.6);
+    setDirectSupportMorphValue("lift", finalLiftValue2, 0.68, 0.58);
+    setDirectSupportMorphValue("surprised", finalSurprisedValue2, 0.62, 0.54);
+    setDirectSupportMorphValue("close", fixedGirlSpeechIntensity > 0.012 ? 0 : 0.08, 0.66, 0.56);
     setDirectSupportMorphValue("neutral", 0, 0.2, 0.32);
     setMorphTargetValue(DIRECT_MOUTH_CONFLICT_TARGETS, 0);
     return;
@@ -39872,6 +39894,7 @@ function buildLipSyncFrames(text) {
   let utf16Index = 0;
   let hintCursorMs = 0;
   let previousViseme = "aa";
+  const fixedGirlFrameMode = currentModel === FIXED_MODEL_NAME;
   const pushFrame = (frame) => {
     const durationMs = Number(frame.durationMs) || 0;
     frames.push({
@@ -39885,12 +39908,15 @@ function buildLipSyncFrames(text) {
     const normalizedPattern = Array.isArray(pattern) && pattern.length ? pattern : [{ viseme: "aa", durationMs: 120, strength: 0.4 }];
     const utf16Start = utf16Index;
     const utf16End = utf16Index + char.length;
+    const minDurationMs = fixedGirlFrameMode ? 44 : 64;
+    const minStrength = fixedGirlFrameMode ? 0.2 : 0.18;
+    const maxStrength = fixedGirlFrameMode ? 0.86 : 0.78;
     for (const part of normalizedPattern) {
       pushFrame({
         char,
         viseme: part.viseme,
-        durationMs: Math.max(64, Math.round((Number(part.durationMs) || 0) * durationScale)),
-        strength: MathUtils.clamp((Number(part.strength) || 0.4) * strengthScale, 0.18, 0.78),
+        durationMs: Math.max(minDurationMs, Math.round((Number(part.durationMs) || 0) * durationScale)),
+        strength: MathUtils.clamp((Number(part.strength) || 0.4) * strengthScale, minStrength, maxStrength),
         utf16Start,
         utf16End
       });
@@ -39902,7 +39928,7 @@ function buildLipSyncFrames(text) {
       pushFrame({
         char,
         viseme: null,
-        durationMs: 110,
+        durationMs: fixedGirlFrameMode ? 72 : 110,
         strength: 0,
         utf16Start: utf16Index,
         utf16End: utf16Index + char.length
@@ -39914,7 +39940,7 @@ function buildLipSyncFrames(text) {
       pushFrame({
         char,
         viseme: null,
-        durationMs: 90,
+        durationMs: fixedGirlFrameMode ? 64 : 90,
         strength: 0,
         utf16Start: utf16Index,
         utf16End: utf16Index + char.length
@@ -39926,7 +39952,7 @@ function buildLipSyncFrames(text) {
       pushFrame({
         char,
         viseme: null,
-        durationMs: 160,
+        durationMs: fixedGirlFrameMode ? 104 : 160,
         strength: 0,
         utf16Start: utf16Index,
         utf16End: utf16Index + char.length
@@ -39938,8 +39964,8 @@ function buildLipSyncFrames(text) {
       pushFrame({
         char,
         viseme: previousViseme,
-        durationMs: 100,
-        strength: 0.32,
+        durationMs: fixedGirlFrameMode ? 76 : 100,
+        strength: fixedGirlFrameMode ? 0.24 : 0.32,
         utf16Start: utf16Index,
         utf16End: utf16Index + char.length
       });
@@ -39951,27 +39977,31 @@ function buildLipSyncFrames(text) {
       pushFrame({
         char,
         viseme,
-        durationMs: 126,
-        strength: 0.56,
+        durationMs: fixedGirlFrameMode ? 92 : 126,
+        strength: fixedGirlFrameMode ? 0.62 : 0.56,
         utf16Start: utf16Index,
         utf16End: utf16Index + char.length
       });
       previousViseme = viseme;
     } else if (isCjkIdeograph(char)) {
       const pattern = selectVisemePattern(char, CJK_VISEME_PATTERNS);
-      pushPatternFrames(char, pattern, 0.72, 0.84);
+      pushPatternFrames(char, pattern, fixedGirlFrameMode ? 0.84 : 0.72, fixedGirlFrameMode ? 0.68 : 0.84);
     } else {
       const pattern = selectVisemePattern(char, FALLBACK_VISEME_PATTERNS);
-      const collapsed = collapseVisemePattern(pattern, 0.62);
-      pushFrame({
-        char,
-        viseme: collapsed.viseme,
-        durationMs: collapsed.durationMs,
-        strength: collapsed.strength,
-        utf16Start: utf16Index,
-        utf16End: utf16Index + char.length
-      });
-      previousViseme = collapsed.viseme;
+      if (fixedGirlFrameMode) {
+        pushPatternFrames(char, pattern, 0.72, 0.7);
+      } else {
+        const collapsed = collapseVisemePattern(pattern, 0.62);
+        pushFrame({
+          char,
+          viseme: collapsed.viseme,
+          durationMs: collapsed.durationMs,
+          strength: collapsed.strength,
+          utf16Start: utf16Index,
+          utf16End: utf16Index + char.length
+        });
+        previousViseme = collapsed.viseme;
+      }
     }
     utf16Index += char.length;
   }
@@ -39985,7 +40015,7 @@ function buildLipSyncFrames(text) {
       utf16End: 0
     });
   }
-  return mergeLipSyncFrames(frames);
+  return mergeLipSyncFrames(frames, { preserveNonSilentFrames: fixedGirlFrameMode });
 }
 function clearLipSyncTimer() {
   if (speechState.fallbackTimerId) {
@@ -40079,7 +40109,7 @@ function addBoneRotation(node, x = 0, y = 0, z = 0) {
   node.rotation.y += y;
   node.rotation.z += z;
 }
-function applyConversationMotion(vrmRef, elapsed) {
+function applyConversationMotion(vrmRef, elapsed, delta = 1 / 60) {
   const humanoid = vrmRef?.humanoid;
   if (!humanoid) {
     return;
@@ -40098,11 +40128,13 @@ function applyConversationMotion(vrmRef, elapsed) {
   );
   const speechMotionScale = speechState.active ? 0.54 : 1;
   const targetWeight = baseTargetWeight * speechMotionScale;
-  const weightLerp = speechState.active ? 0.14 : targetWeight > currentWeight ? 0.1 : 0.055;
-  motionState.currentWeight = MathUtils.lerp(
+  const safeDelta = Math.max(delta || 0, 1 / 120);
+  const weightDamping = speechState.active ? 13 : targetWeight > currentWeight ? 8.2 : 5.8;
+  motionState.currentWeight = MathUtils.damp(
     currentWeight,
     targetWeight,
-    weightLerp
+    weightDamping,
+    safeDelta
   );
   const thinkingTarget = motionState.thinkingPoseTarget || 0;
   const thinkingRamp = motionState.activeGesture === "thinking" ? MathUtils.smoothstep(
@@ -40115,11 +40147,12 @@ function applyConversationMotion(vrmRef, elapsed) {
     1
   ) : 1;
   const effectiveThinkingTarget = thinkingTarget * thinkingRamp;
-  const thinkingLerp = effectiveThinkingTarget > (motionState.thinkingPoseWeight || 0) ? 0.032 : 0.016;
-  motionState.thinkingPoseWeight = MathUtils.lerp(
+  const thinkingDamping = effectiveThinkingTarget > (motionState.thinkingPoseWeight || 0) ? 5.4 : 3.8;
+  motionState.thinkingPoseWeight = MathUtils.damp(
     motionState.thinkingPoseWeight || 0,
     effectiveThinkingTarget,
-    thinkingLerp
+    thinkingDamping,
+    safeDelta
   );
   if (motionState.activeGesture === "thinking" && effectiveThinkingTarget < 1e-3 && (motionState.thinkingPoseWeight || 0) < 4e-3) {
     motionState.activeGesture = "idle";
@@ -40252,6 +40285,8 @@ function stopLipSync(vrmRef = currentVrm, immediate = false) {
   speechState.lastBoundaryFrameIndex = -1;
   speechState.lastBoundaryStrength = 0;
   speechState.lastKnownSpeechElapsedMs = 0;
+  speechState.lastApplyAtMs = 0;
+  speechState.lastApplyDeltaSec = 1 / 60;
   resetLiveSpeechMorphTargets();
   if (immediate) {
     resetVisemes(vrmRef);
@@ -40339,10 +40374,11 @@ function syncLipSyncToSpeechBoundary(event) {
     if (hintElapsedMs2 > 12) {
       const expectedElapsedMs = hintElapsedMs2 * (speechState.timingScale || 1);
       const nextOffsetMs = actualElapsedMs - expectedElapsedMs;
+      const offsetBlend = currentModel === FIXED_MODEL_NAME ? 0.8 : 0.42;
       speechState.timingOffsetMs = MathUtils.lerp(
         speechState.timingOffsetMs || 0,
         nextOffsetMs,
-        0.42
+        offsetBlend
       );
     }
     speechState.boundarySupported = true;
@@ -40369,10 +40405,11 @@ function syncLipSyncToSpeechBoundary(event) {
   if (hintElapsedMs > 24) {
     const expectedElapsedMs = hintElapsedMs * (speechState.timingScale || 1);
     const nextOffsetMs = actualElapsedMs - expectedElapsedMs;
+    const offsetBlend = currentModel === FIXED_MODEL_NAME ? 0.58 : 0.28;
     speechState.timingOffsetMs = MathUtils.lerp(
       speechState.timingOffsetMs || 0,
       nextOffsetMs,
-      0.28
+      offsetBlend
     );
   }
   speechState.boundarySupported = true;
@@ -40391,6 +40428,10 @@ function applyLipSync(vrmRef) {
   const jaw = getJawBoneNode(vrmRef);
   const useDirectMorphSpeech = !jaw && hasDirectSpeechMorphTargets();
   const useFixedGirlDirectSpeech = useDirectMorphSpeech && currentModel === FIXED_MODEL_NAME;
+  const nowMs = performance.now();
+  const applyDeltaSec = speechState.lastApplyAtMs > 0 ? MathUtils.clamp((nowMs - speechState.lastApplyAtMs) / 1e3, 1 / 240, 1 / 18) : 1 / 60;
+  speechState.lastApplyAtMs = nowMs;
+  speechState.lastApplyDeltaSec = applyDeltaSec;
   if (!manager && !jaw) {
     return;
   }
@@ -40399,7 +40440,6 @@ function applyLipSync(vrmRef) {
   let fixedGirlLiveTargets = null;
   let fixedGirlLiveSupport = null;
   if (speechState.active) {
-    const nowMs = performance.now();
     const hintElapsedMs = getLipSyncHintElapsedMs(nowMs);
     const currentIndex = findLipSyncFrameIndexByHintElapsed(hintElapsedMs);
     if (currentIndex === -1) {
@@ -40419,33 +40459,34 @@ function applyLipSync(vrmRef) {
         1
       );
       const openCurve = Math.sin(Math.PI * MathUtils.clamp(frameProgress * 0.88 + 0.06, 0, 1));
-      const currentPulse = silentFrame ? 0 : (currentFrame.strength || 0) * (useFixedGirlDirectSpeech ? 0.16 + openCurve * 0.42 : 0.14 + openCurve * 0.64);
+      const currentPulse = silentFrame ? 0 : (currentFrame.strength || 0) * (useFixedGirlDirectSpeech ? 0.14 + openCurve * 0.34 : 0.14 + openCurve * 0.64);
       const currentJawOpen = getJawOpennessForViseme(currentFrame.viseme);
       const nextJawOpen = getJawOpennessForViseme(nextFrame2?.viseme);
-      const crossFadeToNext = silentFrame ? MathUtils.smoothstep(frameProgress, 0.97, 1) : MathUtils.smoothstep(frameProgress, 0.66, 0.94);
-      const holdCurrent = silentFrame ? 0 : 1 - crossFadeToNext * 0.22;
+      const crossFadeToNext = silentFrame ? MathUtils.smoothstep(frameProgress, 0.97, 1) : useFixedGirlDirectSpeech ? MathUtils.smootherstep(frameProgress, 0.06, 0.3) : MathUtils.smoothstep(frameProgress, 0.66, 0.94);
+      const nextBlendWeight = useFixedGirlDirectSpeech ? Math.max(crossFadeToNext, MathUtils.smoothstep(frameProgress, 0.04, 0.22)) : crossFadeToNext;
+      const holdCurrent = silentFrame ? 0 : useFixedGirlDirectSpeech ? MathUtils.clamp(1 - nextBlendWeight * 0.96, 0.08, 1) : 1 - crossFadeToNext * 0.22;
       if (useFixedGirlDirectSpeech && !silentFrame) {
         fixedGirlLiveTargets = Object.fromEntries(MOUTH_VISEMES.map((viseme) => [viseme, 0]));
         fixedGirlLiveSupport = { drop: 0, lift: 0, surprised: 0 };
         const currentFrameStrength = MathUtils.clamp(
-          (currentFrame.strength || 0) * (0.46 + openCurve * 0.34),
+          (currentFrame.strength || 0) * (0.42 + openCurve * 0.3),
           0,
           0.72
         );
         if (currentFrame.viseme) {
           fixedGirlLiveTargets[currentFrame.viseme] = Math.max(
             fixedGirlLiveTargets[currentFrame.viseme],
-            currentFrameStrength * FIXED_GIRL_LIVE_FRAME_DIRECT_FLOOR
+            currentFrameStrength * FIXED_GIRL_LIVE_FRAME_DIRECT_FLOOR * holdCurrent
           );
           fixedGirlLiveTargets.aa = Math.max(
             fixedGirlLiveTargets.aa,
-            currentFrameStrength * (currentFrame.viseme === "aa" ? 1.22 : 0.76)
+            currentFrameStrength * (currentFrame.viseme === "aa" ? 1.18 : 0.7) * holdCurrent
           );
         }
         if (nextFrame2?.viseme && !isSilentLipSyncFrame(nextFrame2)) {
           fixedGirlLiveTargets[nextFrame2.viseme] = Math.max(
             fixedGirlLiveTargets[nextFrame2.viseme],
-            (nextFrame2.strength || 0) * crossFadeToNext * FIXED_GIRL_LIVE_FRAME_NEXT_FLOOR
+            (nextFrame2.strength || 0) * nextBlendWeight * (FIXED_GIRL_LIVE_FRAME_NEXT_FLOOR + 0.18)
           );
         }
         const currentSupportMap = FIXED_GIRL_LIVE_SUPPORT_FLOOR_MAP[currentFrame.viseme] || {};
@@ -40473,20 +40514,20 @@ function applyLipSync(vrmRef) {
           const nextSupportMap = FIXED_GIRL_LIVE_SUPPORT_FLOOR_MAP[nextFrame2.viseme] || {};
           fixedGirlLiveSupport.drop = Math.max(
             fixedGirlLiveSupport.drop,
-            (nextSupportMap.drop || 0) * crossFadeToNext * 0.72
+            (nextSupportMap.drop || 0) * nextBlendWeight * 0.88
           );
           fixedGirlLiveSupport.lift = Math.max(
             fixedGirlLiveSupport.lift,
-            (nextSupportMap.lift || 0) * crossFadeToNext * 0.62
+            (nextSupportMap.lift || 0) * nextBlendWeight * 0.8
           );
           fixedGirlLiveSupport.surprised = Math.max(
             fixedGirlLiveSupport.surprised,
-            (nextSupportMap.surprised || 0) * crossFadeToNext * 0.48
+            (nextSupportMap.surprised || 0) * nextBlendWeight * 0.58
           );
         }
       }
-      if (!silentFrame && previousFrame?.viseme && frameProgress < 0.12) {
-        const carry = previousFrame.strength * (1 - frameProgress / 0.12) * 0.05;
+      if (!silentFrame && previousFrame?.viseme && frameProgress < 0.08) {
+        const carry = previousFrame.strength * (1 - frameProgress / 0.08) * (useFixedGirlDirectSpeech ? 8e-3 : 0.05);
         targetValues[previousFrame.viseme] = Math.max(
           targetValues[previousFrame.viseme],
           carry
@@ -40501,7 +40542,7 @@ function applyLipSync(vrmRef) {
       if (nextFrame2?.viseme) {
         targetValues[nextFrame2.viseme] = Math.max(
           targetValues[nextFrame2.viseme],
-          nextFrame2.strength * crossFadeToNext * (silentFrame ? useFixedGirlDirectSpeech ? FIXED_GIRL_SILENT_NEXT_BLEND : 0.12 : useFixedGirlDirectSpeech ? 0.18 : 0.34)
+          nextFrame2.strength * nextBlendWeight * (silentFrame ? useFixedGirlDirectSpeech ? FIXED_GIRL_SILENT_NEXT_BLEND : 0.12 : useFixedGirlDirectSpeech ? 0.62 : 0.34)
         );
       }
       compressLipSyncTargets(targetValues);
@@ -40530,7 +40571,7 @@ function applyLipSync(vrmRef) {
       const sameVisemeBoundary = boundaryFrame?.viseme && currentFrame?.viseme && boundaryFrame.viseme === currentFrame.viseme;
       const boundaryWindowMs = boundarySilent ? 0 : 120;
       if (sameVisemeBoundary && boundaryAgeMs < boundaryWindowMs) {
-        const boundaryBoost = (1 - boundaryAgeMs / boundaryWindowMs) * (speechState.lastBoundaryStrength || 0.72) * 0.08;
+        const boundaryBoost = (1 - boundaryAgeMs / boundaryWindowMs) * (speechState.lastBoundaryStrength || 0.72) * (useFixedGirlDirectSpeech ? 0.04 : 0.08);
         if (boundaryFrame?.viseme) {
           targetValues[boundaryFrame.viseme] = Math.max(
             targetValues[boundaryFrame.viseme],
@@ -40568,11 +40609,11 @@ function applyLipSync(vrmRef) {
       const rawTargetValue = targetValues[viseme] || 0;
       const targetValue = dominantViseme && viseme !== dominantViseme ? rawTargetValue * (silenceDecayMode ? 0.28 : 0.46) : rawTargetValue;
       const scaledTargetValue = useFixedGirlDirectSpeech ? targetValue * (dominantViseme === viseme ? 1.52 : 1.24) : targetValue;
-      const visemeBlendFactor = speechState.active ? silenceDecayMode ? scaledTargetValue > currentValue ? useFixedGirlDirectSpeech ? 0.32 : 0.12 : 0.42 : scaledTargetValue > currentValue ? useFixedGirlDirectSpeech ? speechState.boundarySupported ? 0.66 : 0.56 : speechState.boundarySupported ? 0.34 : 0.24 : 0.22 : 0.18;
+      const visemeBlendFactor = speechState.active ? silenceDecayMode ? scaledTargetValue > currentValue ? useFixedGirlDirectSpeech ? 0.3 : 0.12 : 0.42 : scaledTargetValue > currentValue ? useFixedGirlDirectSpeech ? speechState.boundarySupported ? 0.88 : 0.8 : speechState.boundarySupported ? 0.34 : 0.24 : useFixedGirlDirectSpeech ? 0.34 : 0.22 : 0.18;
       const nextValue = MathUtils.lerp(
         currentValue,
         scaledTargetValue,
-        visemeBlendFactor
+        normalizeLipSyncBlend(visemeBlendFactor, applyDeltaSec)
       );
       speechState.visemeValues[viseme] = nextValue;
       setVisemeValue(manager, viseme, useDirectMorphSpeech ? 0 : nextValue);
@@ -40615,10 +40656,10 @@ function speak(text) {
     return;
   }
   refreshAvailableVoices();
-  const rate = CUTE_VOICE_RATE;
   const voice = getPreferredSpeechVoice(voiceSettings);
+  const speechProfile = getCuteSpeechProfile(voice);
+  const rate = speechProfile.rate;
   const utterance = new SpeechSynthesisUtterance(text);
-  const waitForBoundaryBootstrap = currentModel === FIXED_MODEL_NAME;
   const utteranceToken = (speechState.activeUtteranceToken || 0) + 1;
   speechState.activeUtteranceToken = utteranceToken;
   let lipSyncBootstrapped = false;
@@ -40634,14 +40675,13 @@ function speak(text) {
   utterance.lang = voice?.lang || "ja-JP";
   utterance.voice = voice || null;
   utterance.rate = rate;
-  utterance.pitch = CUTE_VOICE_PITCH;
+  utterance.pitch = speechProfile.pitch;
+  utterance.volume = 1;
   utterance.onstart = () => {
     if (!isCurrentUtteranceToken(utteranceToken)) {
       return;
     }
-    if (!waitForBoundaryBootstrap) {
-      beginLipSync();
-    }
+    beginLipSync();
     if (voiceTools?.voiceStatus) {
       voiceTools.voiceStatus.textContent = "\u8AAD\u307F\u4E0A\u3052\u4E2D\u3067\u3059\u3002";
     }
@@ -40683,7 +40723,7 @@ function speak(text) {
     }
     const waitedMs = performance.now() - bootstrapWatchStartedAtMs;
     if (window.speechSynthesis.speaking) {
-      if (!waitForBoundaryBootstrap || waitedMs > 260) {
+      if (waitedMs > 120) {
         beginLipSync();
       }
       return;

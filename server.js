@@ -17,6 +17,9 @@ const sessionHistoryLimit = 24;
 const modelInputMessageLimit = 18;
 const savedMemoryScanLimit = 1200;
 const MINIMAL_APP_MODE = false;
+const defaultOpenAiModel = "gpt-4.1-mini";
+const defaultOllamaBaseUrl = "http://127.0.0.1:11434";
+const defaultOllamaModel = "qwen2.5:3b";
 const baseSystemPrompt = [
   "You are a friendly AI avatar inside a web app.",
   "Reply in natural Japanese unless the user clearly prefers another language.",
@@ -117,6 +120,69 @@ const fixedModelName = "女の子ver2.vrm";
 
 loadEnv(path.join(root, ".env"));
 loadEnv(path.join(root, ".env.local"), true);
+
+function getOpenAiModel() {
+  return process.env.OPENAI_MODEL || defaultOpenAiModel;
+}
+
+function getOllamaBaseUrl() {
+  return String(process.env.OLLAMA_BASE_URL || defaultOllamaBaseUrl).replace(/\/+$/, "");
+}
+
+function getOllamaModel() {
+  return process.env.OLLAMA_MODEL || defaultOllamaModel;
+}
+
+function getRequestedLlmProvider() {
+  return String(process.env.LLM_PROVIDER || "").trim().toLowerCase();
+}
+
+function isOpenAiConfigured() {
+  return Boolean(process.env.OPENAI_API_KEY);
+}
+
+function isOllamaConfigured() {
+  return Boolean(getOllamaModel());
+}
+
+function resolveLlmProvider() {
+  const provider = getRequestedLlmProvider();
+  if (provider === "openai" || provider === "ollama") {
+    return provider;
+  }
+
+  if (!isOpenAiConfigured() && isOllamaConfigured()) {
+    return "ollama";
+  }
+
+  return "openai";
+}
+
+async function checkOllamaAvailability() {
+  try {
+    const response = await fetch(`${getOllamaBaseUrl()}/api/tags`, {
+      method: "GET",
+      signal: AbortSignal.timeout(1500)
+    });
+
+    if (!response.ok) {
+      return {
+        available: false,
+        message: `Ollama responded with ${response.status}.`
+      };
+    }
+
+    return {
+      available: true,
+      message: "Ollama is reachable."
+    };
+  } catch (error) {
+    return {
+      available: false,
+      message: error.message || "Ollama is not reachable."
+    };
+  }
+}
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -222,6 +288,28 @@ function normalizeOpenAiErrorMessage(statusCode, payload) {
   }
 
   return message;
+}
+
+function normalizeOllamaErrorMessage(statusCode, payload) {
+  const message = payload?.error || payload?.message || "Ollama request failed.";
+
+  if (statusCode === 404 && /model/i.test(message)) {
+    return `Ollama model '${getOllamaModel()}' is not installed. Run 'ollama pull ${getOllamaModel()}' first.`;
+  }
+
+  return message;
+}
+
+function extractOllamaText(payload) {
+  if (typeof payload?.message?.content === "string" && payload.message.content.trim()) {
+    return payload.message.content.trim();
+  }
+
+  if (typeof payload?.response === "string" && payload.response.trim()) {
+    return payload.response.trim();
+  }
+
+  return "";
 }
 
 function readJsonFile(filePath) {
@@ -1819,6 +1907,161 @@ function buildPromptInput(messages, importedContext, savedContext, growthContext
   return input;
 }
 
+function buildChatMessages(messages, importedContext, savedContext, growthContext) {
+  const systemParts = [baseSystemPrompt, defaultAvatarPersonalityPrompt];
+  if (!MINIMAL_APP_MODE && importedContext) {
+    systemParts.push(importedMemoryPrompt);
+  }
+  if (!MINIMAL_APP_MODE && savedContext) {
+    systemParts.push(savedMemoryPrompt);
+  }
+  if (!MINIMAL_APP_MODE && growthContext) {
+    systemParts.push(growthMemoryPrompt);
+  }
+
+  const chatMessages = [
+    {
+      role: "system",
+      content: systemParts.join("\n\n")
+    }
+  ];
+
+  if (!MINIMAL_APP_MODE && savedContext) {
+    chatMessages.push({
+      role: "system",
+      content: savedContext
+    });
+  }
+
+  if (!MINIMAL_APP_MODE && growthContext) {
+    chatMessages.push({
+      role: "system",
+      content: growthContext
+    });
+  }
+
+  if (!MINIMAL_APP_MODE && importedContext) {
+    chatMessages.push({
+      role: "system",
+      content: importedContext
+    });
+  }
+
+  chatMessages.push(
+    ...messages.map((message) => ({
+      role: message.role === "assistant" ? "assistant" : "user",
+      content: message.content
+    }))
+  );
+
+  return chatMessages;
+}
+
+async function requestOpenAiChat(input) {
+  if (!isOpenAiConfigured()) {
+    return {
+      ok: false,
+      status: 500,
+      error: "OPENAI_API_KEY is not configured."
+    };
+  }
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: getOpenAiModel(),
+        input,
+        store: false
+      })
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        error: normalizeOpenAiErrorMessage(response.status, payload)
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      text: extractOutputText(payload) || "The AI returned an empty response."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 502,
+      error: error.message || "OpenAI request failed."
+    };
+  }
+}
+
+async function requestOllamaChat(messages) {
+  try {
+    const response = await fetch(`${getOllamaBaseUrl()}/api/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: getOllamaModel(),
+        messages,
+        stream: false
+      })
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        error: normalizeOllamaErrorMessage(response.status, payload)
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      text: extractOllamaText(payload) || "The local LLM returned an empty response."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 503,
+      error: `Could not reach Ollama at ${getOllamaBaseUrl()}. ${error.message || ""}`.trim()
+    };
+  }
+}
+
+async function requestChatCompletion(messages, importedContext, savedContext, growthContext) {
+  const provider = resolveLlmProvider();
+
+  if (provider === "ollama") {
+    return {
+      provider,
+      model: getOllamaModel(),
+      ...await requestOllamaChat(
+        buildChatMessages(messages, importedContext, savedContext, growthContext)
+      )
+    };
+  }
+
+  return {
+    provider: "openai",
+    model: getOpenAiModel(),
+    ...await requestOpenAiChat(
+      buildPromptInput(messages, importedContext, savedContext, growthContext)
+    )
+  };
+}
+
 async function handleHistory(res, url) {
   try {
     const sessionId = url.searchParams.get("sessionId") || "";
@@ -1841,6 +2084,39 @@ async function handleHistory(res, url) {
     console.error(error);
     sendJson(res, 500, { error: error.message || "History request failed." });
   }
+}
+
+async function handleStatus(res) {
+  const provider = resolveLlmProvider();
+  const ollamaStatus = await checkOllamaAvailability();
+  const payload = {
+    llmProvider: provider,
+    openaiConfigured: isOpenAiConfigured(),
+    openaiModel: getOpenAiModel(),
+    ollamaConfigured: isOllamaConfigured(),
+    ollamaModel: getOllamaModel(),
+    ollamaBaseUrl: getOllamaBaseUrl(),
+    ollamaReachable: ollamaStatus.available,
+    ollamaMessage: ollamaStatus.message
+  };
+
+  if (MINIMAL_APP_MODE) {
+    sendJson(res, 200, {
+      ...payload,
+      model: provider === "ollama" ? getOllamaModel() : getOpenAiModel(),
+      minimalMode: true
+    });
+    return;
+  }
+
+  sendJson(res, 200, {
+    ...payload,
+    model: provider === "ollama" ? getOllamaModel() : getOpenAiModel(),
+    memoryImport: getChatGptExportStatus(),
+    database: getDatabaseStatus(),
+    growth: getGrowthStatus(),
+    sessionHistoryLimit
+  });
 }
 
 async function handleChat(req, res) {
@@ -1868,10 +2144,22 @@ async function handleChat(req, res) {
       growthLearning = learnFromUserMessage(sessionId, latestUserContent);
     }
 
-    if (!process.env.OPENAI_API_KEY) {
-      sendJson(res, 500, {
-        error: "OPENAI_API_KEY is not configured.",
-        storedInDatabase: false,
+    const importedContext = MINIMAL_APP_MODE ? "" : buildImportedMemoryContext(messages);
+    const savedContext = MINIMAL_APP_MODE ? "" : buildSavedConversationMemoryContext(sessionId, messages);
+    const growthContext = MINIMAL_APP_MODE ? "" : buildGrowthMemoryContext();
+    const completion = await requestChatCompletion(
+      messages,
+      importedContext,
+      savedContext,
+      growthContext
+    );
+
+    if (!completion.ok) {
+      sendJson(res, completion.status || 500, {
+        error: completion.error || "Chat request failed.",
+        provider: completion.provider,
+        model: completion.model,
+        storedInDatabase: !MINIMAL_APP_MODE,
         minimalMode: MINIMAL_APP_MODE,
         growth: growthLearning?.growth,
         growthLearning
@@ -1879,37 +2167,7 @@ async function handleChat(req, res) {
       return;
     }
 
-    const importedContext = MINIMAL_APP_MODE ? "" : buildImportedMemoryContext(messages);
-    const savedContext = MINIMAL_APP_MODE ? "" : buildSavedConversationMemoryContext(sessionId, messages);
-    const growthContext = MINIMAL_APP_MODE ? "" : buildGrowthMemoryContext();
-    const input = buildPromptInput(messages, importedContext, savedContext, growthContext);
-
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-        input,
-        store: false
-      })
-    });
-
-    const payload = await response.json();
-    if (!response.ok) {
-      const message = normalizeOpenAiErrorMessage(response.status, payload);
-      sendJson(res, response.status, {
-        error: message,
-        storedInDatabase: true,
-        growth: growthLearning.growth,
-        growthLearning
-      });
-      return;
-    }
-
-    const outputText = extractOutputText(payload) || "The AI returned an empty response.";
+    const outputText = completion.text || "The AI returned an empty response.";
     const growthStatus = MINIMAL_APP_MODE ? null : getGrowthStatus();
     if (!MINIMAL_APP_MODE) {
       saveChatMessage(sessionId, modelName, "assistant", outputText, latestUserContent);
@@ -1922,6 +2180,8 @@ async function handleChat(req, res) {
       usedGrowthMemory: !MINIMAL_APP_MODE && Boolean(growthContext),
       storedInDatabase: !MINIMAL_APP_MODE,
       minimalMode: MINIMAL_APP_MODE,
+      provider: completion.provider,
+      model: completion.model,
       growth: growthStatus,
       growthLearning
     });
@@ -1935,26 +2195,11 @@ async function handleChat(req, res) {
   }
 }
 
-http.createServer((req, res) => {
+http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
   if (url.pathname === "/api/status") {
-    if (MINIMAL_APP_MODE) {
-      sendJson(res, 200, {
-        openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
-        model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-        minimalMode: true
-      });
-    } else {
-      sendJson(res, 200, {
-        openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
-        model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-        memoryImport: getChatGptExportStatus(),
-        database: getDatabaseStatus(),
-        growth: getGrowthStatus(),
-        sessionHistoryLimit
-      });
-    }
+    await handleStatus(res);
     return;
   }
 
@@ -2006,9 +2251,12 @@ http.createServer((req, res) => {
   });
 }).listen(port, "0.0.0.0", () => {
   const ip = getLocalIp();
+  const provider = resolveLlmProvider();
   console.log(`PC browser: http://localhost:${port}`);
   console.log(`Phone browser: http://${ip}:${port}`);
-  console.log(`OpenAI key configured: ${process.env.OPENAI_API_KEY ? "yes" : "no"}`);
+  console.log(`LLM provider: ${provider}`);
+  console.log(`OpenAI key configured: ${isOpenAiConfigured() ? "yes" : "no"}`);
+  console.log(`Ollama configured: ${isOllamaConfigured() ? "yes" : "no"} (${getOllamaModel()} @ ${getOllamaBaseUrl()})`);
   if (MINIMAL_APP_MODE) {
     console.log("App mode: minimal");
     return;

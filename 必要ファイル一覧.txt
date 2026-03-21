@@ -1,0 +1,23 @@
+VRoidAI runtime files
+
+Required for local use
+- 1-Open-VRoidAI.bat
+- 2-Open-Public-URL.bat
+- 3-Stop-VRoidAI.bat
+- index.html
+- viewer.js
+- server.js
+- favicon.svg
+- .env.local
+- models\
+- data\
+- chatgpt-export\
+
+Optional / development or deploy files
+- viewer.entry.js
+- package.json
+- netlify\
+- publish-static\
+- netlify.toml
+- .git
+- .npm-cache

@@ -1,0 +1,25 @@
+[
+  {
+    "announcements": {
+      "oai/apps/hasSeenAutoSwitchNux": "2025-12-11T22:01:41.405272+00:00",
+      "oai/apps/hasSeenBurritoNux": "2025-08-15T04:11:42.463493+00:00",
+      "oai/apps/hasSeenExistingUserPersonalityOnboarding": "2026-01-15T03:18:46.000729+00:00",
+      "oai/apps/hasSeenMoonshineNuxV2": "2025-07-23T12:55:33.241516+00:00",
+      "oai/apps/hasSeenOnboarding": "2025-06-10T11:42:39.393762+00:00",
+      "oai/apps/hasSeenTemporaryChatOnboarding": "2025-07-23T12:08:10.302826+00:00",
+      "oai/apps/hasSeenl1239dk1LaunchNux": "2026-02-28T14:02:59.489902+00:00"
+    },
+    "beta_settings": {},
+    "habitat_object_version": 34610428,
+    "settings": {
+      "codex_training_allowed": false,
+      "codex_training_allowed_v2": false,
+      "model_sticky_for_new_chats": false,
+      "moonshine": true,
+      "show_expanded_code_view": false,
+      "sunshine": true,
+      "training_allowed": true
+    },
+    "user_id": "user-E62O6Eq9aPxpXIc278XSQgEQ"
+  }
+]

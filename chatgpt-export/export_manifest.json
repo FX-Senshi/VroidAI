@@ -1,0 +1,144 @@
+{
+  "export_files": [
+    {
+      "path": "chat.html",
+      "size_bytes": 12424365
+    },
+    {
+      "path": "conversations-000.json",
+      "size_bytes": 10695239
+    },
+    {
+      "path": "conversations-001.json",
+      "size_bytes": 5834041
+    },
+    {
+      "path": "file-D3pxWpPLEMqQpdnTo2y4KN-69805A5E-C956-4A35-BC72-481D38919EF2.jpeg",
+      "size_bytes": 578152
+    },
+    {
+      "path": "file-UP1wmpPjtiTNzX3G8geBxm-2541BF5F-9BD5-423D-A324-461FBF3BCC85.jpeg",
+      "size_bytes": 231338
+    },
+    {
+      "path": "file_000000002e3862069668f55f628e2623-1a2fce91-e206-455f-9e03-e63ecaa70b70.png",
+      "size_bytes": 175281
+    },
+    {
+      "path": "file_000000003748620b8f2cf33296de5c38-093cefc9-39ce-47f5-9446-a7b4e7130141.png",
+      "size_bytes": 209465
+    },
+    {
+      "path": "file_00000000749c720883d51d794b02297f-D1D442A1-80EA-42A4-B6E5-321AE88CA6E5.jpeg",
+      "size_bytes": 2835258
+    },
+    {
+      "path": "file_00000000a28c7207be76432c2b567c48-a6f1adc7-87ca-450d-a81f-9a5acf2ebdc5.png",
+      "size_bytes": 65657
+    },
+    {
+      "path": "file_00000000e468620dbc70e894cf85b793-d8de0499-d640-459e-a9a5-0005bd3427ae.png",
+      "size_bytes": 191562
+    },
+    {
+      "path": "file_00000000e4c472468152f6a8b2f69b9e-e8d346e7-ca76-4eaa-8fe6-9a1633709cd0.png",
+      "size_bytes": 41593
+    },
+    {
+      "path": "user-E62O6Eq9aPxpXIc278XSQgEQ/file_000000003d207207b2222b626f61f04c-55085aa6-ce5f-44bf-ae51-7394f0d0418c.png",
+      "size_bytes": 3313319
+    },
+    {
+      "path": "user.json",
+      "size_bytes": 161
+    },
+    {
+      "path": "user_settings.json",
+      "size_bytes": 975
+    }
+  ],
+  "logical_files": {
+    "chat.html": {
+      "files": [
+        "chat.html"
+      ],
+      "sharded": false
+    },
+    "conversations.json": {
+      "files": [
+        "conversations-000.json",
+        "conversations-001.json"
+      ],
+      "shard_count": 2,
+      "sharded": true
+    },
+    "file-D3pxWpPLEMqQpdnTo2y4KN-69805A5E-C956-4A35-BC72-481D38919EF2.jpeg": {
+      "files": [
+        "file-D3pxWpPLEMqQpdnTo2y4KN-69805A5E-C956-4A35-BC72-481D38919EF2.jpeg"
+      ],
+      "sharded": false
+    },
+    "file-UP1wmpPjtiTNzX3G8geBxm-2541BF5F-9BD5-423D-A324-461FBF3BCC85.jpeg": {
+      "files": [
+        "file-UP1wmpPjtiTNzX3G8geBxm-2541BF5F-9BD5-423D-A324-461FBF3BCC85.jpeg"
+      ],
+      "sharded": false
+    },
+    "file_000000002e3862069668f55f628e2623-1a2fce91-e206-455f-9e03-e63ecaa70b70.png": {
+      "files": [
+        "file_000000002e3862069668f55f628e2623-1a2fce91-e206-455f-9e03-e63ecaa70b70.png"
+      ],
+      "sharded": false
+    },
+    "file_000000003748620b8f2cf33296de5c38-093cefc9-39ce-47f5-9446-a7b4e7130141.png": {
+      "files": [
+        "file_000000003748620b8f2cf33296de5c38-093cefc9-39ce-47f5-9446-a7b4e7130141.png"
+      ],
+      "sharded": false
+    },
+    "file_00000000749c720883d51d794b02297f-D1D442A1-80EA-42A4-B6E5-321AE88CA6E5.jpeg": {
+      "files": [
+        "file_00000000749c720883d51d794b02297f-D1D442A1-80EA-42A4-B6E5-321AE88CA6E5.jpeg"
+      ],
+      "sharded": false
+    },
+    "file_00000000a28c7207be76432c2b567c48-a6f1adc7-87ca-450d-a81f-9a5acf2ebdc5.png": {
+      "files": [
+        "file_00000000a28c7207be76432c2b567c48-a6f1adc7-87ca-450d-a81f-9a5acf2ebdc5.png"
+      ],
+      "sharded": false
+    },
+    "file_00000000e468620dbc70e894cf85b793-d8de0499-d640-459e-a9a5-0005bd3427ae.png": {
+      "files": [
+        "file_00000000e468620dbc70e894cf85b793-d8de0499-d640-459e-a9a5-0005bd3427ae.png"
+      ],
+      "sharded": false
+    },
+    "file_00000000e4c472468152f6a8b2f69b9e-e8d346e7-ca76-4eaa-8fe6-9a1633709cd0.png": {
+      "files": [
+        "file_00000000e4c472468152f6a8b2f69b9e-e8d346e7-ca76-4eaa-8fe6-9a1633709cd0.png"
+      ],
+      "sharded": false
+    },
+    "user-E62O6Eq9aPxpXIc278XSQgEQ/file_000000003d207207b2222b626f61f04c-55085aa6-ce5f-44bf-ae51-7394f0d0418c.png": {
+      "files": [
+        "user-E62O6Eq9aPxpXIc278XSQgEQ/file_000000003d207207b2222b626f61f04c-55085aa6-ce5f-44bf-ae51-7394f0d0418c.png"
+      ],
+      "sharded": false
+    },
+    "user.json": {
+      "files": [
+        "user.json"
+      ],
+      "sharded": false
+    },
+    "user_settings.json": {
+      "files": [
+        "user_settings.json"
+      ],
+      "sharded": false
+    }
+  },
+  "manifest_file": "export_manifest.json",
+  "version": 1
+}
