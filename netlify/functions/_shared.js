@@ -168,7 +168,7 @@ function getBlobsStore(event) {
   }
 
   try {
-    return blobsApi.getStore({ name: STORE_NAME, consistency: "strong" });
+    return blobsApi.getStore({ name: STORE_NAME });
   } catch {
     return null;
   }
@@ -180,7 +180,7 @@ async function readJson(store, key, fallbackValue) {
   }
 
   try {
-    const value = await store.get(key, { type: "json", consistency: "strong" });
+    const value = await store.get(key, { type: "json" });
     return value && typeof value === "object" ? value : fallbackValue;
   } catch {
     return fallbackValue;
