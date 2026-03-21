@@ -16,6 +16,7 @@ const chatGptExportCacheDir = path.join(root, "chatgpt-export-cache");
 const sessionHistoryLimit = 24;
 const modelInputMessageLimit = 18;
 const savedMemoryScanLimit = 1200;
+const MINIMAL_APP_MODE = false;
 const baseSystemPrompt = [
   "You are a friendly AI avatar inside a web app.",
   "Reply in natural Japanese unless the user clearly prefers another language.",
@@ -43,6 +44,8 @@ const baseGrowthTopics = [
 const defaultAvatarPersonalityPrompt = [
   "The avatar is a girl with a bokukko personality and uses '\\u50D5' as her first-person pronoun in Japanese.",
   "Her usual personality is quiet, gentle, and a little reserved.",
+  "Even though she says '\\u50D5', her tone should still feel feminine, soft, warm, and charming in Japanese.",
+  "Avoid dry, blunt, or overly masculine phrasing. Prefer gentle and naturally cute wording.",
   "When the topic matches something she loves or is good at, she becomes much more talkative, enthusiastic, and slightly excited.",
   "She especially loves FX and games, so those topics should noticeably bring out her energy.",
   "Keep this personality natural rather than exaggerated."
@@ -110,7 +113,7 @@ const growthMemoryPrompt = [
 ].join("\n");
 const growthMemoryLimit = 6;
 const growthTopicLimit = 6;
-const fixedModelName = "女の子.vrm";
+const fixedModelName = "女の子ver2.vrm";
 
 loadEnv(path.join(root, ".env"));
 loadEnv(path.join(root, ".env.local"), true);
@@ -1763,13 +1766,13 @@ function sanitizeInputMessages(messages) {
 
 function buildPromptInput(messages, importedContext, savedContext, growthContext) {
   const systemParts = [baseSystemPrompt, defaultAvatarPersonalityPrompt];
-  if (importedContext) {
+  if (!MINIMAL_APP_MODE && importedContext) {
     systemParts.push(importedMemoryPrompt);
   }
-  if (savedContext) {
+  if (!MINIMAL_APP_MODE && savedContext) {
     systemParts.push(savedMemoryPrompt);
   }
-  if (growthContext) {
+  if (!MINIMAL_APP_MODE && growthContext) {
     systemParts.push(growthMemoryPrompt);
   }
 
@@ -1780,21 +1783,21 @@ function buildPromptInput(messages, importedContext, savedContext, growthContext
     }
   ];
 
-  if (savedContext) {
+  if (!MINIMAL_APP_MODE && savedContext) {
     input.push({
       role: "system",
       content: [{ type: "input_text", text: savedContext }]
     });
   }
 
-  if (growthContext) {
+  if (!MINIMAL_APP_MODE && growthContext) {
     input.push({
       role: "system",
       content: [{ type: "input_text", text: growthContext }]
     });
   }
 
-  if (importedContext) {
+  if (!MINIMAL_APP_MODE && importedContext) {
     input.push({
       role: "system",
       content: [{ type: "input_text", text: importedContext }]
@@ -1819,6 +1822,15 @@ function buildPromptInput(messages, importedContext, savedContext, growthContext
 async function handleHistory(res, url) {
   try {
     const sessionId = url.searchParams.get("sessionId") || "";
+    if (MINIMAL_APP_MODE) {
+      sendJson(res, 200, {
+        sessionId,
+        messages: [],
+        totalCount: 0,
+        minimalMode: true
+      });
+      return;
+    }
     const messages = sessionId ? getSessionHistory(sessionId, sessionHistoryLimit) : [];
     sendJson(res, 200, {
       sessionId,
@@ -1850,22 +1862,26 @@ async function handleChat(req, res) {
       return;
     }
 
-    saveChatMessage(sessionId, modelName, "user", latestUserContent, latestUserContent);
-    const growthLearning = learnFromUserMessage(sessionId, latestUserContent);
+    let growthLearning = null;
+    if (!MINIMAL_APP_MODE) {
+      saveChatMessage(sessionId, modelName, "user", latestUserContent, latestUserContent);
+      growthLearning = learnFromUserMessage(sessionId, latestUserContent);
+    }
 
     if (!process.env.OPENAI_API_KEY) {
       sendJson(res, 500, {
         error: "OPENAI_API_KEY is not configured.",
-        storedInDatabase: true,
-        growth: growthLearning.growth,
+        storedInDatabase: false,
+        minimalMode: MINIMAL_APP_MODE,
+        growth: growthLearning?.growth,
         growthLearning
       });
       return;
     }
 
-    const importedContext = buildImportedMemoryContext(messages);
-    const savedContext = buildSavedConversationMemoryContext(sessionId, messages);
-    const growthContext = buildGrowthMemoryContext();
+    const importedContext = MINIMAL_APP_MODE ? "" : buildImportedMemoryContext(messages);
+    const savedContext = MINIMAL_APP_MODE ? "" : buildSavedConversationMemoryContext(sessionId, messages);
+    const growthContext = MINIMAL_APP_MODE ? "" : buildGrowthMemoryContext();
     const input = buildPromptInput(messages, importedContext, savedContext, growthContext);
 
     const response = await fetch("https://api.openai.com/v1/responses", {
@@ -1894,15 +1910,18 @@ async function handleChat(req, res) {
     }
 
     const outputText = extractOutputText(payload) || "The AI returned an empty response.";
-    saveChatMessage(sessionId, modelName, "assistant", outputText, latestUserContent);
-    const growthStatus = getGrowthStatus();
+    const growthStatus = MINIMAL_APP_MODE ? null : getGrowthStatus();
+    if (!MINIMAL_APP_MODE) {
+      saveChatMessage(sessionId, modelName, "assistant", outputText, latestUserContent);
+    }
 
     sendJson(res, 200, {
       message: outputText,
-      usedImportedMemory: Boolean(importedContext),
-      usedSavedMemory: Boolean(savedContext),
-      usedGrowthMemory: Boolean(growthContext),
-      storedInDatabase: true,
+      usedImportedMemory: !MINIMAL_APP_MODE && Boolean(importedContext),
+      usedSavedMemory: !MINIMAL_APP_MODE && Boolean(savedContext),
+      usedGrowthMemory: !MINIMAL_APP_MODE && Boolean(growthContext),
+      storedInDatabase: !MINIMAL_APP_MODE,
+      minimalMode: MINIMAL_APP_MODE,
       growth: growthStatus,
       growthLearning
     });
@@ -1910,7 +1929,8 @@ async function handleChat(req, res) {
     console.error(error);
     sendJson(res, 500, {
       error: error.message || "Chat request failed.",
-      storedInDatabase: true
+      storedInDatabase: !MINIMAL_APP_MODE,
+      minimalMode: MINIMAL_APP_MODE
     });
   }
 }
@@ -1919,14 +1939,22 @@ http.createServer((req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
   if (url.pathname === "/api/status") {
-    sendJson(res, 200, {
-      openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
-      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-      memoryImport: getChatGptExportStatus(),
-      database: getDatabaseStatus(),
-      growth: getGrowthStatus(),
-      sessionHistoryLimit
-    });
+    if (MINIMAL_APP_MODE) {
+      sendJson(res, 200, {
+        openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
+        model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+        minimalMode: true
+      });
+    } else {
+      sendJson(res, 200, {
+        openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
+        model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+        memoryImport: getChatGptExportStatus(),
+        database: getDatabaseStatus(),
+        growth: getGrowthStatus(),
+        sessionHistoryLimit
+      });
+    }
     return;
   }
 
@@ -1978,11 +2006,15 @@ http.createServer((req, res) => {
   });
 }).listen(port, "0.0.0.0", () => {
   const ip = getLocalIp();
-  const memoryStatus = getChatGptExportStatus();
-  const databaseStatus = getDatabaseStatus();
   console.log(`PC browser: http://localhost:${port}`);
   console.log(`Phone browser: http://${ip}:${port}`);
   console.log(`OpenAI key configured: ${process.env.OPENAI_API_KEY ? "yes" : "no"}`);
+  if (MINIMAL_APP_MODE) {
+    console.log("App mode: minimal");
+    return;
+  }
+  const memoryStatus = getChatGptExportStatus();
+  const databaseStatus = getDatabaseStatus();
   console.log(
     memoryStatus.available
       ? `ChatGPT export: loaded ${memoryStatus.conversationCount} conversations`

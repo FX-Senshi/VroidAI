@@ -1,6 +1,8 @@
 "use strict";
 
 const {
+  appendSessionMessages,
+  buildNetlifyContexts,
   extractOutputText,
   getLatestUserContent,
   jsonResponse,
@@ -17,6 +19,8 @@ exports.handler = async function handler(event) {
 
   try {
     const body = event.body ? JSON.parse(event.body) : {};
+    const sessionId = String(body.sessionId || "default-session");
+    const modelName = body.modelName ? String(body.modelName) : null;
     const messages = sanitizeInputMessages(Array.isArray(body.messages) ? body.messages : []);
 
     if (!messages.length) {
@@ -28,31 +32,43 @@ exports.handler = async function handler(event) {
       return jsonResponse(400, { error: "A user message is required." });
     }
 
+    const storedUserResult = await appendSessionMessages(event, sessionId, modelName, [
+      { role: "user", content: latestUserContent }
+    ]);
+
     if (!process.env.OPENAI_API_KEY) {
       return jsonResponse(500, {
         error: "OPENAI_API_KEY is not configured on Netlify.",
-        storedInDatabase: false,
-        growth: unavailableGrowth()
+        storedInDatabase: storedUserResult.storedInDatabase,
+        database: storedUserResult.database,
+        growth: storedUserResult.growth || unavailableGrowth()
       });
     }
 
-    const openAiResult = await requestOpenAi(messages);
+    const contextState = await buildNetlifyContexts(event, sessionId, messages);
+    const openAiResult = await requestOpenAi(messages, contextState.savedContext, contextState.growthContext);
     if (!openAiResult.ok) {
       return jsonResponse(openAiResult.status, {
         error: normalizeOpenAiErrorMessage(openAiResult.status, openAiResult.payload),
-        storedInDatabase: false,
-        growth: unavailableGrowth()
+        storedInDatabase: storedUserResult.storedInDatabase,
+        database: storedUserResult.database,
+        growth: storedUserResult.growth || contextState.growth || unavailableGrowth()
       });
     }
 
     const outputText = extractOutputText(openAiResult.payload) || "The AI returned an empty response.";
+    const storedAssistantResult = await appendSessionMessages(event, sessionId, modelName, [
+      { role: "assistant", content: outputText }
+    ]);
+
     return jsonResponse(200, {
       message: outputText,
       usedImportedMemory: false,
-      usedSavedMemory: false,
-      usedGrowthMemory: false,
-      storedInDatabase: false,
-      growth: unavailableGrowth()
+      usedSavedMemory: Boolean(contextState.savedContext),
+      usedGrowthMemory: Boolean(contextState.growthContext),
+      storedInDatabase: storedAssistantResult.storedInDatabase,
+      database: storedAssistantResult.database,
+      growth: storedAssistantResult.growth || contextState.growth || unavailableGrowth()
     });
   } catch (error) {
     return jsonResponse(500, {

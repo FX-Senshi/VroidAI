@@ -1,20 +1,14 @@
 "use strict";
 
-const {
-  jsonResponse,
-  sessionHistoryLimit,
-  unavailableDatabase,
-  unavailableGrowth,
-  unavailableMemoryImport
-} = require("./_shared");
+const { getStatusPayload, jsonResponse } = require("./_shared");
 
-exports.handler = async function handler() {
-  return jsonResponse(200, {
-    openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
-    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-    memoryImport: unavailableMemoryImport(),
-    database: unavailableDatabase(),
-    growth: unavailableGrowth(),
-    sessionHistoryLimit
-  });
+exports.handler = async function handler(event) {
+  try {
+    const payload = await getStatusPayload(event);
+    return jsonResponse(200, payload);
+  } catch (error) {
+    return jsonResponse(500, {
+      error: error?.message || "Status request failed."
+    });
+  }
 };

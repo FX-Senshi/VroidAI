@@ -3,7 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
 
 const container = document.getElementById("stage");
-const status = document.getElementById("status");
+let status = document.getElementById("status");
 const apiState = document.getElementById("apiState");
 const dbState = document.getElementById("dbState");
 const memoryState = document.getElementById("memoryState");
@@ -17,9 +17,24 @@ const mobileMenuButton = document.getElementById("mobileMenuButton");
 const mobileMenuBackdrop = document.getElementById("mobileMenuBackdrop");
 const mobileMenuCloseButton = document.getElementById("mobileMenuCloseButton");
 const runtimeSearchParams = new URLSearchParams(window.location.search);
+const BUILD_VERSION = "20260321b";
 const DEBUG_LIP_SYNC_MODE = runtimeSearchParams.has("debugLipSync");
 const DEBUG_LIP_SYNC_AUTORUN = runtimeSearchParams.has("debugLipSyncAutoRun");
 const FEMALE_VOICE_NAME_PATTERN = /(female|woman|girl|kyoko|nanami|naomi|ayumi|haruka|sayaka|sakura|samantha|zira|aria|jenny|sonia|monica|lucia|hemi|xiaoxiao|huihui|ja-jp nanami|ja-jp haruka)/iu;
+const MINIMAL_APP_MODE = false;
+const MINIMAL_GREETING = "こんにちは。話しかけてください。";
+const CUTE_VOICE_NAME_PRIORITY = [
+  /nanami/iu,
+  /haruka/iu,
+  /sakura/iu,
+  /sayaka/iu,
+  /ayumi/iu,
+  /kyoko/iu,
+  /naomi/iu,
+  /zira|aria|jenny|sonia|monica|lucia|hemi|xiaoxiao|huihui/iu
+];
+const CUTE_VOICE_RATE = 1.04;
+const CUTE_VOICE_PITCH = 1.16;
 
 const MODEL_CAMERA_OVERRIDES = {
   "ojisan.vrm": {
@@ -39,6 +54,14 @@ const MODEL_CAMERA_OVERRIDES = {
     minCameraZ: 2.86
   },
   "女の子.vrm": {
+    targetYFactor: 0.09,
+    minTargetY: 0.14,
+    cameraYFactor: 0.04,
+    minCameraY: 0.04,
+    cameraZFactor: 1.34,
+    minCameraZ: 2.42
+  },
+  "女の子ver2.vrm": {
     targetYFactor: 0.09,
     minTargetY: 0.14,
     cameraYFactor: 0.04,
@@ -76,8 +99,66 @@ const MOBILE_STAGE_BREAKPOINT = 680;
 const MOBILE_PROJECTED_X_TARGET = -0.42;
 const MOBILE_MODEL_YAW_OFFSET = THREE.MathUtils.degToRad(8);
 const MOBILE_MODEL_PITCH_OFFSET = THREE.MathUtils.degToRad(3);
-const CAMERA_PITCH_DOWN_OFFSET = 0;
-const FIXED_MODEL_NAME = "女の子.vrm";
+const CAMERA_PITCH_DOWN_OFFSET = THREE.MathUtils.degToRad(-1);
+const MODEL_ROOT_ROTATION_OVERRIDES = {
+  "女の子ver2.vrm": {
+    yaw: 0,
+    mobileYawOffset: MOBILE_MODEL_YAW_OFFSET,
+    mobilePitch: MOBILE_MODEL_PITCH_OFFSET
+  }
+};
+
+const DEFAULT_ROOT_ROTATION = {
+  yaw: Math.PI,
+  mobileYawOffset: MOBILE_MODEL_YAW_OFFSET,
+  mobilePitch: MOBILE_MODEL_PITCH_OFFSET
+};
+
+const RELAXED_POSE_OVERRIDES = {
+  "女の子ver2.vrm": {
+    leftShoulder: { x: 0, y: 0, z: -0.38 },
+    leftUpperArm: { x: 0.03, y: 0, z: -0.46 },
+    leftLowerArm: { x: 0, y: 0, z: 0.01 },
+    leftHand: { x: 0, y: 0, z: 0 },
+    rightShoulder: { x: 0, y: 0, z: 0.38 },
+    rightUpperArm: { x: 0.03, y: 0, z: 0.46 },
+    rightLowerArm: { x: 0, y: 0, z: -0.01 },
+    rightHand: { x: 0, y: 0, z: 0 }
+  }
+};
+
+const RELAXED_UPPER_BODY_OVERRIDES = {
+  "女の子ver2.vrm": {
+    spineX: 0.005,
+    chestX: -0.01,
+    neckX: -0.072,
+    headX: -0.036,
+    nodScale: 0.42
+  }
+};
+
+const DEFAULT_RELAXED_UPPER_BODY = {
+  spineX: 0.03,
+  chestX: 0.02,
+  neckX: 0.03,
+  headX: 0,
+  nodScale: 1
+};
+
+const DEFAULT_RELAXED_POSE = {
+  leftShoulder: { x: 0, y: 0, z: 0 },
+  leftUpperArm: { x: 0.05, y: 0, z: 1.35 },
+  leftLowerArm: { x: 0, y: 0, z: 0.08 },
+  leftHand: { x: 0, y: 0, z: 0 },
+  rightShoulder: { x: 0, y: 0, z: 0 },
+  rightUpperArm: { x: 0.05, y: 0, z: -1.35 },
+  rightLowerArm: { x: 0, y: 0, z: -0.08 },
+  rightHand: { x: 0, y: 0, z: 0 }
+};
+const FIXED_MODEL_NAME = "女の子ver2.vrm";
+const FIXED_MODEL_ASSET_FILE_NAME = "girlver2-lite.vrm";
+const FIXED_GIRL_FACE_TEXTURE_FILE = "girlver2-face-base.png";
+const FIXED_GIRL_BODY_TEXTURE_FILE = "girlver2-body-base.png";
 const DEFAULT_CAMERA_ADJUSTMENTS = {
   heightOffset: 0,
   distanceOffset: 0,
@@ -86,6 +167,23 @@ const DEFAULT_CAMERA_ADJUSTMENTS = {
 const DEFAULT_VOICE_SETTINGS = {
   enabled: true,
   voiceURI: ""
+};
+const BASIC_HUMANOID_NODE_NAME_MAP = {
+  hips: ["J_Bip_C_Hips", "Hips"],
+  spine: ["J_Bip_C_Spine", "Spine"],
+  chest: ["J_Bip_C_Chest", "Chest"],
+  upperChest: ["J_Bip_C_UpperChest", "UpperChest"],
+  neck: ["J_Bip_C_Neck", "Neck"],
+  head: ["J_Bip_C_Head", "Head"],
+  jaw: ["J_Bip_C_Jaw", "Jaw"],
+  leftShoulder: ["J_Bip_L_Shoulder", "LeftShoulder"],
+  leftUpperArm: ["J_Bip_L_UpperArm", "LeftUpperArm"],
+  leftLowerArm: ["J_Bip_L_LowerArm", "LeftLowerArm"],
+  leftHand: ["J_Bip_L_Hand", "LeftHand"],
+  rightShoulder: ["J_Bip_R_Shoulder", "RightShoulder"],
+  rightUpperArm: ["J_Bip_R_UpperArm", "RightUpperArm"],
+  rightLowerArm: ["J_Bip_R_LowerArm", "RightLowerArm"],
+  rightHand: ["J_Bip_R_Hand", "RightHand"]
 };
 const messages = [];
 const MOUTH_VISEMES = ["aa", "ih", "ou", "ee", "oh"];
@@ -130,14 +228,117 @@ const VISEME_JAW_OPENNESS = {
 };
 const MAX_VISEME_PEAK = 0.82;
 const MAX_VISEME_TOTAL = 1.08;
+const FIXED_GIRL_MAX_VISEME_PEAK = 1.52;
+const FIXED_GIRL_MAX_VISEME_TOTAL = 2.18;
+const FIXED_GIRL_LIVE_DIRECT_GAIN = 1.4;
+const FIXED_GIRL_LIVE_DROP_GAIN = 1.02;
+const FIXED_GIRL_LIVE_LIFT_GAIN = 0.24;
+const FIXED_GIRL_LIVE_DOMINANT_BOOST = 0.42;
+const FIXED_GIRL_LIVE_FRAME_DIRECT_FLOOR = 0.62;
+const FIXED_GIRL_LIVE_FRAME_NEXT_FLOOR = 0.34;
+const FIXED_GIRL_DISABLE_BOUNDARY_SYNC = false;
+const FIXED_GIRL_FALLBACK_TIMING_SCALE = 1.66;
+const FIXED_GIRL_FALLBACK_CHAR_DURATION_MS = 170;
+const FIXED_GIRL_SPEECH_LEAD_MS = 0;
+const FIXED_GIRL_SILENT_NEXT_BLEND = 0;
+const FIXED_GIRL_SPEECH_DIRECT_LIMIT = 0.9;
+const FIXED_GIRL_SPEECH_DROP_LIMIT = 0.5;
+const FIXED_GIRL_SPEECH_LIFT_LIMIT = 0.12;
+const FIXED_GIRL_SPEECH_SURPRISED_LIMIT = 0.02;
+const FIXED_GIRL_SPEECH_VISEME_MAP = {
+  aa: { aa: 1.38, ou: 0.08 },
+  ih: { ih: 1.22, ee: 0.26 },
+  ou: { ou: 1.34 },
+  ee: { ee: 1.08, ih: 0.24 },
+  oh: { oh: 0.42, ou: 0.36, aa: 0.18 }
+};
+const FIXED_GIRL_SPEECH_SUPPORT_MAP = {
+  aa: { drop: 0.52, lift: 0.08, surprised: 0.03 },
+  ih: { drop: 0.22, lift: 0.1, surprised: 0 },
+  ou: { drop: 0.26, lift: 0.18, surprised: 0.01 },
+  ee: { drop: 0.2, lift: 0.1, surprised: 0 },
+  oh: { drop: 0.24, lift: 0.1, surprised: 0.02 }
+};
+const FIXED_GIRL_SPEECH_POSE_MAP = {
+  aa: {
+    direct: { aa: 0.8, ou: 0.08 },
+    support: { open: 0.04, drop: 0.36, lift: 0.03, surprised: 0.01 }
+  },
+  ih: {
+    direct: { ih: 0.68, ee: 0.18 },
+    support: { open: 0.03, drop: 0.19, lift: 0.09, surprised: 0 }
+  },
+  ou: {
+    direct: { ou: 0.88 },
+    support: { open: 0.04, drop: 0.2, lift: 0.11, surprised: 0.01 }
+  },
+  ee: {
+    direct: { ee: 0.66, ih: 0.16 },
+    support: { open: 0.03, drop: 0.17, lift: 0.1, surprised: 0 }
+  },
+  oh: {
+    direct: { oh: 0.28, ou: 0.24, aa: 0.12 },
+    support: { open: 0.03, drop: 0.15, lift: 0.05, surprised: 0.01 }
+  }
+};
+const FIXED_GIRL_LIVE_SUPPORT_FLOOR_MAP = {
+  aa: { drop: 0.36, lift: 0.04, surprised: 0.02 },
+  ih: { drop: 0.26, lift: 0.08, surprised: 0 },
+  ou: { drop: 0.24, lift: 0.1, surprised: 0.01 },
+  ee: { drop: 0.24, lift: 0.08, surprised: 0 },
+  oh: { drop: 0.22, lift: 0.05, surprised: 0.01 }
+};
+const FIXED_GIRL_DIAGNOSTIC_STEPS = [
+  {
+    durationMs: 180,
+    visemes: {},
+    support: { close: 0.16 }
+  },
+  {
+    durationMs: 480,
+    visemes: { aa: 0.76 },
+    support: { drop: 0.34, lift: 0.04 }
+  },
+  {
+    durationMs: 480,
+    visemes: { ih: 0.7, ee: 0.18 },
+    support: { drop: 0.19, lift: 0.1 }
+  },
+  {
+    durationMs: 480,
+    visemes: { ou: 0.86 },
+    support: { drop: 0.18, lift: 0.12 }
+  },
+  {
+    durationMs: 480,
+    visemes: { ee: 0.68, ih: 0.14 },
+    support: { drop: 0.16, lift: 0.11 }
+  },
+  {
+    durationMs: 480,
+    visemes: { oh: 0.28, ou: 0.24, aa: 0.12 },
+    support: { drop: 0.14, lift: 0.06 }
+  },
+  {
+    durationMs: 220,
+    visemes: {},
+    support: { close: 0.16 }
+  }
+];
 const MAX_JAW_TARGET = 0.7;
 const JAW_ROTATION_MULTIPLIER = 0.2;
+const DIRECT_MORPH_INFLUENCE_LIMIT = 6.5;
 const DIRECT_MOUTH_MORPH_SCALE = 2.2;
 const DIRECT_MOUTH_OPEN_SUPPORT = 0.56;
 const DIRECT_MOUTH_LARGE_SCALE = 2.55;
 const DIRECT_MOUTH_DROP_SCALE = 1.78;
 const DIRECT_MOUTH_LIFT_SCALE = 0.96;
 const DIRECT_MOUTH_SURPRISED_SCALE = 0.82;
+const JAWLESS_MOUTH_OPEN_FLOOR = 0.02;
+const JAWLESS_AA_FLOOR_SCALE = 0.2;
+const JAWLESS_OH_FLOOR_SCALE = 0.08;
+const JAWLESS_ACTIVITY_THRESHOLD = 0.1;
+const DIRECT_SUPPORT_KEYS = ["open", "drop", "lift", "surprised", "close", "neutral"];
 const CJK_VISEME_PATTERNS = [
   [
     { viseme: "aa", durationMs: 98, strength: 0.74 },
@@ -186,17 +387,27 @@ let currentModel = null;
 let currentSceneRoot = null;
 let currentVrm = null;
 let currentMorphTargetBindings = null;
+const fixedGirlTextureState = {
+  face: null,
+  body: null,
+  pending: null
+};
 let cameraTools = null;
 let voiceTools = null;
 let availableVoices = [];
 let lipSyncDebugPre = null;
 const cameraToolRanges = new Map();
+const mouthDiagnosticState = {
+  active: false,
+  startedAtMs: 0
+};
 const speechState = {
   active: false,
   frames: [],
   totalDurationMs: 0,
   startTimeMs: 0,
   fallbackTimerId: 0,
+  bootstrapWatcherId: 0,
   syncMode: "timed",
   currentFrameIndex: -1,
   currentFrameStartedAtMs: 0,
@@ -207,8 +418,18 @@ const speechState = {
   lastBoundaryFrameIndex: -1,
   lastBoundaryStrength: 0,
   lastKnownSpeechElapsedMs: 0,
+  activeUtteranceToken: 0,
   visemeValues: Object.fromEntries(MOUTH_VISEMES.map((viseme) => [viseme, 0])),
-  jawValue: 0
+  directMorphValues: Object.fromEntries(MOUTH_VISEMES.map((viseme) => [viseme, 0])),
+  frameTargets: Object.fromEntries(MOUTH_VISEMES.map((viseme) => [viseme, 0])),
+  liveDirectTargets: Object.fromEntries(MOUTH_VISEMES.map((viseme) => [viseme, 0])),
+  liveSupportTargets: {
+    drop: 0,
+    lift: 0,
+    surprised: 0
+  },
+  jawValue: 0,
+  supportValues: Object.fromEntries(DIRECT_SUPPORT_KEYS.map((key) => [key, 0]))
 };
 const expressionState = {
   currentValues: Object.fromEntries(EMOTION_PRESETS.map((preset) => [preset, 0])),
@@ -222,6 +443,7 @@ const motionState = {
   emphasis: 0,
   holdUntilMs: 0,
   currentWeight: 0,
+  releaseGesture: "idle",
   gestureStartedAtMs: 0,
   thinkingPoseWeight: 0,
   thinkingPoseTarget: 0
@@ -294,12 +516,20 @@ function updateLipSyncDebug() {
     visemes: Object.fromEntries(
       MOUTH_VISEMES.map((viseme) => [viseme, Number((speechState.visemeValues[viseme] || 0).toFixed(3))])
     ),
+    liveDirectTargets: Object.fromEntries(
+      MOUTH_VISEMES.map((viseme) => [viseme, Number((speechState.liveDirectTargets[viseme] || 0).toFixed(3))])
+    ),
     directMorphs: Object.fromEntries(
       Object.entries(directMouthValues).map(([key, value]) => [key, value == null ? null : Number(value.toFixed(3))])
     ),
     supportMorphs: Object.fromEntries(
       Object.entries(supportMouthValues).map(([key, value]) => [key, value == null ? null : Number(value.toFixed(3))])
     ),
+    liveSupportTargets: {
+      drop: Number((speechState.liveSupportTargets.drop || 0).toFixed(3)),
+      lift: Number((speechState.liveSupportTargets.lift || 0).toFixed(3)),
+      surprised: Number((speechState.liveSupportTargets.surprised || 0).toFixed(3))
+    },
     emotion: {
       active: expressionState.activeEmotion,
       holdUntilMs: Math.max(0, Math.round(expressionState.holdUntilMs - performance.now()))
@@ -387,18 +617,23 @@ modelSelect?.addEventListener("change", async () => {
 
 async function bootstrap() {
   try {
+    ensureStatusBar();
     verifyDom();
     setupMobileMenu();
     createVoiceTools();
-    createCameraTools();
+    if (!MINIMAL_APP_MODE) {
+      createCameraTools();
+    }
     initSpeechSupport();
     await waitForStageLayout();
     app = await initViewer();
     await loadModelList();
-    await checkApiStatus();
-    const restored = await loadSavedHistory();
+    if (!MINIMAL_APP_MODE) {
+      await checkApiStatus();
+    }
+    const restored = MINIMAL_APP_MODE ? false : await loadSavedHistory();
     if (!restored) {
-      addMessage("assistant", "こんにちは。話しかけてください。", {
+      addMessage("assistant", MINIMAL_GREETING, {
         affectExpression: false
       });
       resetConversationExpression();
@@ -406,6 +641,29 @@ async function bootstrap() {
   } catch (error) {
     showFailure("Init failed", error);
   }
+}
+
+function ensureStatusBar() {
+  if (status) {
+    return;
+  }
+
+  const viewer = document.querySelector(".viewer");
+  if (!viewer) {
+    return;
+  }
+
+  let statusBar = viewer.querySelector(".statusBar");
+  if (!statusBar) {
+    statusBar = document.createElement("div");
+    statusBar.className = "statusBar";
+    viewer.appendChild(statusBar);
+  }
+
+  status = document.createElement("div");
+  status.id = "status";
+  status.className = "status";
+  statusBar.appendChild(status);
 }
 
 function verifyDom() {
@@ -629,18 +887,27 @@ function resetConversationExpression() {
 
 function stopThinkingMotion() {
   motionState.thinkingPoseTarget = 0;
-  if (motionState.activeGesture === "thinking") {
-    setMotionGesture("idle", 0, 0);
-  }
+  motionState.holdUntilMs = Math.max(motionState.holdUntilMs || 0, performance.now() + 260);
 }
 
 function resetConversationMotion() {
   motionState.thinkingPoseTarget = 0;
   motionState.thinkingPoseWeight = 0;
+  motionState.currentWeight = 0;
+  motionState.releaseGesture = "idle";
   setMotionGesture("idle", 0, 0);
 }
 
 function setMotionGesture(gesture, emphasis, holdUntilMs) {
+  if (gesture !== "idle" && gesture !== "thinking") {
+    motionState.releaseGesture = gesture;
+  } else if (
+    gesture === "idle"
+    && motionState.activeGesture !== "idle"
+    && motionState.activeGesture !== "thinking"
+  ) {
+    motionState.releaseGesture = motionState.activeGesture;
+  }
   if (motionState.activeGesture !== gesture) {
     motionState.gestureStartedAtMs = performance.now();
   }
@@ -720,7 +987,10 @@ function createCameraTools() {
   wrapper.innerHTML = `
     <div class="cameraToolsHeader">
       <div class="meta">カメラ</div>
-      <button class="cameraResetButton" type="button">リセット</button>
+      <div class="cameraToolsActions">
+        <button class="cameraTestButton" type="button">口テスト</button>
+        <button class="cameraResetButton" type="button">リセット</button>
+      </div>
     </div>
     <div class="field">
       <label for="cameraHeightRange">高さ <span class="cameraValue" data-role="heightValue">0.00</span></label>
@@ -742,6 +1012,7 @@ function createCameraTools() {
   const distanceInput = wrapper.querySelector("#cameraDistanceRange");
   const horizontalInput = wrapper.querySelector("#cameraHorizontalRange");
   const resetButton = wrapper.querySelector(".cameraResetButton");
+  const testButton = wrapper.querySelector(".cameraTestButton");
   const heightValue = wrapper.querySelector("[data-role='heightValue']");
   const distanceValue = wrapper.querySelector("[data-role='distanceValue']");
   const horizontalValue = wrapper.querySelector("[data-role='horizontalValue']");
@@ -772,6 +1043,9 @@ function createCameraTools() {
     applyCurrentCameraFrame();
     updateCameraTools();
   });
+  testButton.addEventListener("click", () => {
+    startMouthDiagnosticTest();
+  });
 
   cameraTools = {
     wrapper,
@@ -779,6 +1053,7 @@ function createCameraTools() {
     distanceInput,
     horizontalInput,
     resetButton,
+    testButton,
     heightValue,
     distanceValue,
     horizontalValue
@@ -799,11 +1074,11 @@ function createVoiceTools() {
   wrapper.dataset.voiceTools = "true";
   wrapper.className = "voiceTools";
   wrapper.innerHTML = `
-    <div class="voiceToolsHeader">
-      <div class="meta">女性ボイス</div>
-      <label class="voiceToggle">
-        <input id="voiceEnabledToggle" type="checkbox" />
-        <span>音声ON</span>
+      <div class="voiceToolsHeader">
+        <div class="meta">${MINIMAL_APP_MODE ? "ボイス" : "女性ボイス"}</div>
+        <label class="voiceToggle">
+          <input id="voiceEnabledToggle" type="checkbox" />
+          <span>音声ON</span>
       </label>
     </div>
     <div class="field">
@@ -873,6 +1148,12 @@ function ensureCameraToolsStyles() {
       gap: 12px;
       align-items: center;
     }
+    .cameraToolsActions {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .cameraTestButton,
     .cameraResetButton {
       border: 1px solid rgba(98, 67, 39, 0.18);
       border-radius: 999px;
@@ -969,6 +1250,9 @@ function updateCameraTools() {
   cameraTools.distanceInput.disabled = !hasModel;
   cameraTools.horizontalInput.disabled = !hasModel;
   cameraTools.resetButton.disabled = !hasModel;
+  if (cameraTools.testButton) {
+    cameraTools.testButton.disabled = !hasModel;
+  }
 
   cameraTools.heightInput.min = String(range.minHeightOffset);
   cameraTools.heightInput.max = String(range.maxHeightOffset);
@@ -1013,6 +1297,16 @@ function initSpeechSupport() {
   window.addEventListener("touchstart", primeSpeech, { passive: true, once: true });
 }
 
+function getCuteVoicePriority(voice) {
+  const haystack = `${voice?.name || ""} ${voice?.voiceURI || ""}`.trim();
+  for (let index = 0; index < CUTE_VOICE_NAME_PRIORITY.length; index += 1) {
+    if (CUTE_VOICE_NAME_PRIORITY[index].test(haystack)) {
+      return index;
+    }
+  }
+  return CUTE_VOICE_NAME_PRIORITY.length;
+}
+
 function refreshAvailableVoices() {
   if (!("speechSynthesis" in window)) {
     availableVoices = [];
@@ -1025,6 +1319,15 @@ function refreshAvailableVoices() {
     const rightJa = /^ja\b/i.test(right.lang || "") ? 1 : 0;
     if (leftJa !== rightJa) {
       return rightJa - leftJa;
+    }
+    const leftFemale = isLikelyFemaleVoice(left) ? 1 : 0;
+    const rightFemale = isLikelyFemaleVoice(right) ? 1 : 0;
+    if (leftFemale !== rightFemale) {
+      return rightFemale - leftFemale;
+    }
+    const cutePriorityDiff = getCuteVoicePriority(left) - getCuteVoicePriority(right);
+    if (cutePriorityDiff !== 0) {
+      return cutePriorityDiff;
     }
     return String(left.name || "").localeCompare(String(right.name || ""), "ja");
   });
@@ -1097,19 +1400,21 @@ function updateVoiceTools() {
   voiceTools.voiceSelect.disabled = !settings.enabled || selectableVoices.length === 0;
 
   if (!settings.enabled) {
-    voiceTools.voiceStatus.textContent = "返答音声はオフです。";
+    voiceTools.voiceStatus.textContent = MINIMAL_APP_MODE ? "音声オフ" : "返答音声はオフです。";
     return;
   }
 
   if (!selectableVoices.length) {
-    voiceTools.voiceStatus.textContent = "音声を読み込み中です。少し待ってから送信してください。";
+    voiceTools.voiceStatus.textContent = MINIMAL_APP_MODE
+      ? "音声を準備中..."
+      : "音声を読み込み中です。少し待ってから送信してください。";
     return;
   }
 
   const label = preferredVoice
     ? `${preferredVoice.name}${preferredVoice.lang ? ` / ${preferredVoice.lang}` : ""}`
     : "システム既定";
-  voiceTools.voiceStatus.textContent = `返答を ${label} で読み上げます。`;
+  voiceTools.voiceStatus.textContent = MINIMAL_APP_MODE ? label : `返答を ${label} で読み上げます。`;
 }
 
 function formatSignedValue(value) {
@@ -1238,7 +1543,7 @@ function setStatus(message, detail) {
   if (!status) {
     return;
   }
-  status.textContent = message;
+  status.textContent = `${message} · ${BUILD_VERSION}`;
   status.title = detail || "";
 }
 
@@ -1246,6 +1551,30 @@ function showFailure(message, error) {
   const detail = formatError(error);
   console.error(message, error);
   setStatus(message, detail);
+  let debugFailure = document.getElementById("debugFailure");
+  if (!debugFailure) {
+    debugFailure = document.createElement("div");
+    debugFailure.id = "debugFailure";
+    Object.assign(debugFailure.style, {
+      position: "absolute",
+      left: "12px",
+      right: "12px",
+      bottom: "12px",
+      zIndex: "3",
+      padding: "10px 12px",
+      borderRadius: "14px",
+      background: "rgba(255, 246, 241, 0.95)",
+      border: "1px solid rgba(176, 88, 54, 0.24)",
+      color: "#8e4720",
+      fontSize: "12px",
+      lineHeight: "1.45",
+      whiteSpace: "pre-wrap",
+      boxShadow: "0 12px 24px rgba(74, 50, 28, 0.12)"
+    });
+    const viewer = document.querySelector(".viewer");
+    viewer?.appendChild(debugFailure);
+  }
+  debugFailure.textContent = detail || message;
 }
 
 function formatError(error) {
@@ -1487,8 +1816,11 @@ async function loadModel(fileName) {
 
   fitAvatarToView(currentSceneRoot, camera, lookTarget, fileName);
   scene.add(currentSceneRoot);
+  if (fileName === FIXED_MODEL_NAME) {
+    upgradeFixedGirlBaseTextures(currentSceneRoot);
+  }
   updateCameraTools();
-  setStatus(nextModel.vrm ? "Ready" : "Ready (basic)");
+  setStatus(nextModel.isBasic ? "Ready (basic)" : nextModel.vrm ? "Ready" : "Ready (basic)");
 
   if (DEBUG_LIP_SYNC_AUTORUN) {
     window.setTimeout(() => {
@@ -1497,56 +1829,254 @@ async function loadModel(fileName) {
   }
 }
 
-function loadModelScene(loader, fileName) {
+function getModelAssetFileName(fileName) {
+  return fileName === FIXED_MODEL_NAME ? FIXED_MODEL_ASSET_FILE_NAME : fileName;
+}
+
+function isFixedGirlFaceMaterial(material) {
+  return /Face|Eye/i.test(String(material?.name || ""));
+}
+
+function isFixedGirlBodyMaterial(material) {
+  const name = String(material?.name || "");
+  return /Body|Shoes|Hair|CLOTH/i.test(name);
+}
+
+async function loadTextureFromModelFile(fileName) {
+  const response = await fetch(`./models/${encodeURIComponent(fileName)}`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch texture: ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const texture = await new Promise((resolve, reject) => {
+      new THREE.TextureLoader().load(
+        objectUrl,
+        resolve,
+        undefined,
+        (error) => reject(error || new Error(`Failed to load texture ${fileName}.`))
+      );
+    });
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.flipY = false;
+    texture.needsUpdate = true;
+    return texture;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function ensureFixedGirlBaseTextures() {
+  if (fixedGirlTextureState.face && fixedGirlTextureState.body) {
+    return fixedGirlTextureState;
+  }
+
+  if (!fixedGirlTextureState.pending) {
+    fixedGirlTextureState.pending = Promise.all([
+      loadTextureFromModelFile(FIXED_GIRL_FACE_TEXTURE_FILE),
+      loadTextureFromModelFile(FIXED_GIRL_BODY_TEXTURE_FILE)
+    ])
+      .then(([face, body]) => {
+        fixedGirlTextureState.face = face;
+        fixedGirlTextureState.body = body;
+        return fixedGirlTextureState;
+      })
+      .finally(() => {
+        fixedGirlTextureState.pending = null;
+      });
+  }
+
+  return fixedGirlTextureState.pending;
+}
+
+async function upgradeFixedGirlBaseTextures(root) {
+  try {
+    const { face, body } = await ensureFixedGirlBaseTextures();
+    if (currentSceneRoot !== root || currentModel !== FIXED_MODEL_NAME) {
+      return;
+    }
+
+    root.traverse((object) => {
+      if (!object?.isMesh || !object.material) {
+        return;
+      }
+
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) {
+        if (isFixedGirlFaceMaterial(material)) {
+          material.map = face;
+          material.needsUpdate = true;
+        } else if (isFixedGirlBodyMaterial(material)) {
+          material.map = body;
+          material.needsUpdate = true;
+        }
+      }
+    });
+  } catch (error) {
+    console.warn("upgradeFixedGirlBaseTextures failed", error);
+  }
+}
+
+async function loadModelScene(loader, fileName) {
+  const assetFileName = getModelAssetFileName(fileName);
+  const modelUrl = `./models/${encodeURIComponent(assetFileName)}`;
+  setStatus("Fetching avatar...");
+
+  const response = await fetch(modelUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch model: ${response.status}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  setStatus("Parsing avatar...");
+
+  const gltf = await new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error("Model parsing timed out."));
+    }, 20000);
+
+    loader.parse(
+      arrayBuffer,
+      `${window.location.origin}/models/`,
+      (parsed) => {
+        window.clearTimeout(timeoutId);
+        resolve(parsed);
+      },
+      (error) => {
+        window.clearTimeout(timeoutId);
+        reject(error || new Error("GLTFLoader could not parse the model."));
+      }
+    );
+  });
+
+  setStatus("Preparing avatar...");
+
+  const vrm = gltf.userData?.vrm || null;
+  const deferHeavyPostLoadWork = fileName === FIXED_MODEL_NAME;
+
+  if (vrm && !deferHeavyPostLoadWork) {
+    try {
+      VRMUtils.rotateVRM0(vrm);
+    } catch (error) {
+      console.warn("rotateVRM0 failed", error);
+    }
+
+    try {
+      VRMUtils.removeUnnecessaryVertices(gltf.scene);
+    } catch (error) {
+      console.warn("removeUnnecessaryVertices failed", error);
+    }
+
+    try {
+      VRMUtils.combineSkeletons(gltf.scene);
+    } catch (error) {
+      console.warn("combineSkeletons failed", error);
+    }
+  }
+
+  const root = vrm?.scene || gltf.scene;
+  if (!root) {
+    throw new Error("Model scene was empty.");
+  }
+
+  root.rotation.y = Math.PI;
+  root.traverse((object) => {
+    object.frustumCulled = false;
+  });
+
+  const morphTargetBindings = deferHeavyPostLoadWork
+    ? new Map()
+    : collectMorphTargetBindings(root);
+
+  if (deferHeavyPostLoadWork) {
+    window.setTimeout(() => {
+      try {
+        const deferredBindings = collectMorphTargetBindings(root);
+        if (currentSceneRoot === root) {
+          currentMorphTargetBindings = deferredBindings;
+        }
+      } catch (error) {
+        console.warn("deferred morph binding collection failed", error);
+      }
+    }, 0);
+  }
+
+  return {
+    root,
+    vrm,
+    morphTargetBindings,
+    isBasic: false
+  };
+}
+
+function getNamedNode(root, names = []) {
+  for (const name of names) {
+    const node = root.getObjectByName(name);
+    if (node) {
+      return node;
+    }
+  }
+  return null;
+}
+
+function createBasicHumanoidAdapter(root) {
+  return {
+    getNormalizedBoneNode(boneName) {
+      return getNamedNode(root, BASIC_HUMANOID_NODE_NAME_MAP[boneName] || []);
+    },
+    getRawBoneNode(boneName) {
+      return getNamedNode(root, BASIC_HUMANOID_NODE_NAME_MAP[boneName] || []);
+    }
+  };
+}
+
+function createBasicVrmAdapter(root) {
+  return {
+    scene: root,
+    humanoid: createBasicHumanoidAdapter(root),
+    expressionManager: null,
+    update() {}
+  };
+}
+
+async function loadBasicModelScene(fileName) {
+  const response = await fetch(`./models/${encodeURIComponent(fileName)}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch model: ${response.status}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const basicLoader = new GLTFLoader();
+
   return new Promise((resolve, reject) => {
-    loader.load(
-      `./models/${encodeURIComponent(fileName)}`,
+    basicLoader.parse(
+      arrayBuffer,
+      `${window.location.origin}/models/`,
       (gltf) => {
         try {
-          const vrm = gltf.userData?.vrm || null;
-
-          if (vrm) {
-            try {
-              VRMUtils.rotateVRM0(vrm);
-            } catch (error) {
-              console.warn("rotateVRM0 failed", error);
-            }
-
-            try {
-              VRMUtils.removeUnnecessaryVertices(gltf.scene);
-            } catch (error) {
-              console.warn("removeUnnecessaryVertices failed", error);
-            }
-
-            try {
-              VRMUtils.combineSkeletons(gltf.scene);
-            } catch (error) {
-              console.warn("combineSkeletons failed", error);
-            }
-          }
-
-          const root = vrm?.scene || gltf.scene;
+          const root = gltf.scene;
           if (!root) {
-            reject(new Error("Model scene was empty."));
+            reject(new Error("Basic model scene was empty."));
             return;
           }
 
-          root.rotation.y = Math.PI;
           root.traverse((object) => {
             object.frustumCulled = false;
           });
 
           resolve({
             root,
-            vrm,
-            morphTargetBindings: collectMorphTargetBindings(root)
+            vrm: createBasicVrmAdapter(root),
+            morphTargetBindings: new Map(),
+            isBasic: true
           });
         } catch (error) {
           reject(error);
         }
       },
-      undefined,
-      (error) => reject(error || new Error("GLTFLoader could not load the model."))
+      (error) => reject(error || new Error("Basic GLTFLoader could not parse the model."))
     );
   });
 }
@@ -1695,6 +2225,9 @@ function collapseVisemePattern(pattern, strengthScale = 1) {
 }
 
 function compressLipSyncTargets(targetValues) {
+  const useFixedGirlLimits = currentModel === FIXED_MODEL_NAME;
+  const maxPeakLimit = useFixedGirlLimits ? FIXED_GIRL_MAX_VISEME_PEAK : MAX_VISEME_PEAK;
+  const maxTotalLimit = useFixedGirlLimits ? FIXED_GIRL_MAX_VISEME_TOTAL : MAX_VISEME_TOTAL;
   let maxTarget = 0;
   let totalTarget = 0;
 
@@ -1704,11 +2237,11 @@ function compressLipSyncTargets(targetValues) {
     totalTarget += value;
   }
 
-  const peakScale = maxTarget > MAX_VISEME_PEAK
-    ? MAX_VISEME_PEAK / maxTarget
+  const peakScale = maxTarget > maxPeakLimit
+    ? maxPeakLimit / maxTarget
     : 1;
-  const totalScale = totalTarget > MAX_VISEME_TOTAL
-    ? MAX_VISEME_TOTAL / totalTarget
+  const totalScale = totalTarget > maxTotalLimit
+    ? maxTotalLimit / totalTarget
     : 1;
   const scale = Math.min(peakScale, totalScale);
 
@@ -1762,6 +2295,22 @@ function isSilentLipSyncFrame(frame) {
   return !frame?.viseme || (Number(frame?.strength) || 0) <= 0.01;
 }
 
+function resetLiveSpeechMorphTargets() {
+  for (const viseme of MOUTH_VISEMES) {
+    speechState.frameTargets[viseme] = 0;
+  }
+  for (const viseme of MOUTH_VISEMES) {
+    speechState.liveDirectTargets[viseme] = 0;
+  }
+  speechState.liveSupportTargets.drop = 0;
+  speechState.liveSupportTargets.lift = 0;
+  speechState.liveSupportTargets.surprised = 0;
+}
+
+function isCurrentUtteranceToken(token) {
+  return Boolean(token) && speechState.activeUtteranceToken === token;
+}
+
 function collectMorphTargetBindings(root) {
   const bindings = new Map();
   root?.traverse((object) => {
@@ -1787,7 +2336,7 @@ function setMorphTargetValue(targetNames, value) {
     return;
   }
 
-  const clampedValue = THREE.MathUtils.clamp(value, 0, 1);
+  const clampedValue = THREE.MathUtils.clamp(value, 0, DIRECT_MORPH_INFLUENCE_LIMIT);
   for (const targetName of targetNames) {
     const bindings = currentMorphTargetBindings.get(targetName);
     if (!bindings?.length) {
@@ -1803,35 +2352,324 @@ function setMorphTargetValue(targetNames, value) {
   }
 }
 
-function applyDirectMouthMorphFallback() {
+function setDirectSpeechMorphValue(viseme, targetValue, blendUp = 0.18, blendDown = 0.24) {
+  const targetNames = DIRECT_MOUTH_MORPH_TARGETS[viseme];
+  if (!targetNames) {
+    return;
+  }
+
+  const currentValue = speechState.directMorphValues[viseme] || 0;
+  const clampedTarget = THREE.MathUtils.clamp(targetValue, 0, DIRECT_MORPH_INFLUENCE_LIMIT);
+  const blend = clampedTarget > currentValue ? blendUp : blendDown;
+  const nextValue = THREE.MathUtils.lerp(currentValue, clampedTarget, blend);
+  speechState.directMorphValues[viseme] = nextValue < 0.001 ? 0 : nextValue;
+  setMorphTargetValue(targetNames, speechState.directMorphValues[viseme]);
+}
+
+function setDirectSupportMorphValue(key, targetValue, blendUp = 0.22, blendDown = 0.34) {
+  const targetNames = DIRECT_MOUTH_SUPPORT_TARGETS[key];
+  if (!targetNames) {
+    return;
+  }
+
+  const currentValue = speechState.supportValues[key] || 0;
+  const clampedTarget = THREE.MathUtils.clamp(targetValue, 0, DIRECT_MORPH_INFLUENCE_LIMIT);
+  const blend = clampedTarget > currentValue ? blendUp : blendDown;
+  const nextValue = THREE.MathUtils.lerp(currentValue, clampedTarget, blend);
+  speechState.supportValues[key] = nextValue < 0.001 ? 0 : nextValue;
+  setMorphTargetValue(targetNames, speechState.supportValues[key]);
+}
+
+function hasDirectSpeechMorphTargets() {
+  if (!currentMorphTargetBindings?.size) {
+    return false;
+  }
+
+  return ["Fcl_MTH_A", "Fcl_MTH_I", "Fcl_MTH_U", "Fcl_MTH_E", "Fcl_MTH_O", "Fcl_MTH_Down"]
+    .every((targetName) => currentMorphTargetBindings.has(targetName));
+}
+
+function getJawBoneNode(vrmRef = currentVrm) {
+  const humanoid = vrmRef?.humanoid;
+  if (!humanoid) {
+    return null;
+  }
+
+  return humanoid.getNormalizedBoneNode("jaw")
+    || humanoid.getRawBoneNode?.("jaw")
+    || null;
+}
+
+function applyDirectMouthMorphFallback(vrmRef = currentVrm) {
   if (!currentMorphTargetBindings?.size) {
     return;
   }
 
+  if (applyMouthDiagnosticStep(vrmRef)) {
+    return;
+  }
+
+  const hasJawBone = Boolean(getJawBoneNode(vrmRef));
+  const isFixedGirlModel = currentModel === FIXED_MODEL_NAME;
+  let dominantViseme = null;
   let dominantValue = 0;
+  let secondaryValue = 0;
   let totalValue = 0;
   for (const viseme of MOUTH_VISEMES) {
     const visemeValue = speechState.visemeValues[viseme] || 0;
-    dominantValue = Math.max(dominantValue, visemeValue);
+    if (visemeValue > dominantValue) {
+      secondaryValue = dominantValue;
+      dominantValue = visemeValue;
+      dominantViseme = viseme;
+    } else if (visemeValue > secondaryValue) {
+      secondaryValue = visemeValue;
+    }
     totalValue += visemeValue;
   }
-  const speechEnergy = THREE.MathUtils.clamp(dominantValue * 0.78 + totalValue * 0.44, 0, 1);
+  const speechEnergy = THREE.MathUtils.clamp(
+    dominantValue * 0.84 + totalValue * 0.36,
+    0,
+    DIRECT_MORPH_INFLUENCE_LIMIT
+  );
+  const aaValue = speechState.visemeValues.aa || 0;
+  const ouValue = speechState.visemeValues.ou || 0;
+  const eeValue = speechState.visemeValues.ee || 0;
+  const ihValue = speechState.visemeValues.ih || 0;
+  const ohValue = speechState.visemeValues.oh || 0;
+    const mouthActivity = THREE.MathUtils.clamp(dominantValue * 0.76 + totalValue * 0.24, 0, 1);
+    const liveDirectPeak = MOUTH_VISEMES.reduce(
+      (max, viseme) => Math.max(max, speechState.liveDirectTargets[viseme] || 0),
+      0
+    );
+    const liveSupportPeak = Math.max(
+      speechState.liveSupportTargets.drop || 0,
+      speechState.liveSupportTargets.lift || 0,
+      speechState.liveSupportTargets.surprised || 0
+    );
+  const effectiveMouthActivity = Math.max(
+      mouthActivity,
+      THREE.MathUtils.clamp(liveDirectPeak * 0.22, 0, 1),
+      THREE.MathUtils.clamp(liveSupportPeak * 0.42, 0, 1)
+    );
+    const fixedGirlSpeechWindowActive = speechState.active && !hasJawBone && isFixedGirlModel;
+    const jawlessSpeechActive = speechState.active && !hasJawBone && effectiveMouthActivity > JAWLESS_ACTIVITY_THRESHOLD;
+    const jawlessOpenStrength = jawlessSpeechActive
+    ? THREE.MathUtils.clamp(
+        0.22
+          + dominantValue * 0.68
+          + secondaryValue * 0.16
+          + aaValue * 0.3
+          + ohValue * 0.22
+          + ouValue * 0.12,
+        0.22,
+        1.18
+        )
+      : 0;
 
-  for (const viseme of MOUTH_VISEMES) {
-    const targetNames = DIRECT_MOUTH_MORPH_TARGETS[viseme];
+    if (fixedGirlSpeechWindowActive) {
+      const currentSpeechFrame = speechState.currentFrameIndex >= 0
+        ? speechState.frames[speechState.currentFrameIndex] || null
+        : null;
+      const nextSpeechFrame = speechState.currentFrameIndex >= 0
+        ? speechState.frames[speechState.currentFrameIndex + 1] || null
+        : null;
+      const hintElapsedMs = speechState.active ? getLipSyncHintElapsedMs(performance.now()) : 0;
+      const currentSpeechDurationMs = Math.max(currentSpeechFrame?.durationMs || 0, 1);
+      const currentSpeechSilent = isSilentLipSyncFrame(currentSpeechFrame);
+      const currentSpeechProgress = currentSpeechFrame
+        ? THREE.MathUtils.clamp(
+            (hintElapsedMs - currentSpeechFrame.hintStartMs) / currentSpeechDurationMs,
+            0,
+            1
+          )
+        : 0;
+      const openCurve = Math.sin(
+        Math.PI * THREE.MathUtils.clamp(currentSpeechProgress * 0.88 + 0.06, 0, 1)
+      );
+      const crossFadeToNext = currentSpeechFrame
+        ? currentSpeechSilent
+          ? THREE.MathUtils.smoothstep(currentSpeechProgress, 0.97, 1)
+          : THREE.MathUtils.smoothstep(currentSpeechProgress, 0.66, 0.94)
+        : 0;
+      const directTargets = Object.fromEntries(MOUTH_VISEMES.map((viseme) => [viseme, 0]));
+      const supportTargets = { open: 0, drop: 0, lift: 0, surprised: 0 };
+      const speechDirectGain = currentSpeechSilent ? 1 : 1.12;
+      const speechOpenGain = currentSpeechSilent ? 1 : 1.02;
+      const speechDropGain = currentSpeechSilent ? 1 : 1.04;
+      const speechLiftGain = currentSpeechSilent ? 1 : 0.78;
+      const currentPose = currentSpeechFrame?.viseme ? FIXED_GIRL_SPEECH_POSE_MAP[currentSpeechFrame.viseme] : null;
+      const nextPose = nextSpeechFrame?.viseme && !isSilentLipSyncFrame(nextSpeechFrame)
+        ? FIXED_GIRL_SPEECH_POSE_MAP[nextSpeechFrame.viseme]
+        : null;
+      const currentPoseWeight = currentPose
+        ? THREE.MathUtils.clamp(
+            0.12 + (currentSpeechFrame.strength || 0) * (0.62 + openCurve * 0.34),
+            0.12,
+            0.72
+          )
+        : 0;
+      const nextPoseWeight = nextPose
+        ? THREE.MathUtils.clamp(
+            (nextSpeechFrame.strength || 0) * crossFadeToNext * 0.66 + crossFadeToNext * 0.02,
+            0,
+            0.28
+          )
+        : 0;
+      const fixedGirlSpeechIntensity = THREE.MathUtils.clamp(
+        Math.max(
+          currentPoseWeight * 0.92 + nextPoseWeight * 0.38,
+          liveDirectPeak * 0.96,
+          liveSupportPeak * 0.88
+        ),
+        0,
+        1
+      );
+      const fixedGirlOpenStrength = THREE.MathUtils.clamp(
+        currentPoseWeight * 0.72
+          + nextPoseWeight * 0.28
+          + liveDirectPeak * 0.52
+          + liveSupportPeak * 0.18,
+        0,
+        1
+      );
+
+      if (currentPose) {
+        for (const [targetViseme, value] of Object.entries(currentPose.direct || {})) {
+          directTargets[targetViseme] += value * currentPoseWeight;
+        }
+        supportTargets.open += (currentPose.support?.open || 0) * currentPoseWeight;
+        supportTargets.drop += (currentPose.support?.drop || 0) * currentPoseWeight;
+        supportTargets.lift += (currentPose.support?.lift || 0) * currentPoseWeight;
+        supportTargets.surprised += (currentPose.support?.surprised || 0) * currentPoseWeight;
+      }
+      if (nextPose) {
+        for (const [targetViseme, value] of Object.entries(nextPose.direct || {})) {
+          directTargets[targetViseme] += value * nextPoseWeight;
+        }
+        supportTargets.open += (nextPose.support?.open || 0) * nextPoseWeight;
+        supportTargets.drop += (nextPose.support?.drop || 0) * nextPoseWeight;
+        supportTargets.lift += (nextPose.support?.lift || 0) * nextPoseWeight;
+        supportTargets.surprised += (nextPose.support?.surprised || 0) * nextPoseWeight;
+      }
+
+      if (currentSpeechFrame?.viseme && currentPoseWeight > 0.001) {
+        directTargets[currentSpeechFrame.viseme] = Math.max(
+          directTargets[currentSpeechFrame.viseme] + currentPoseWeight * FIXED_GIRL_LIVE_DOMINANT_BOOST,
+          0.03 + currentPoseWeight * 0.14
+        );
+      }
+
+      for (const viseme of MOUTH_VISEMES) {
+        directTargets[viseme] = Math.max(
+          directTargets[viseme] * speechDirectGain,
+          (speechState.liveDirectTargets[viseme] || 0) * 1.54
+        );
+      }
+      supportTargets.open *= speechOpenGain;
+      supportTargets.drop = Math.max(supportTargets.drop * speechDropGain, (speechState.liveSupportTargets.drop || 0) * 1.08);
+      supportTargets.lift = Math.max(supportTargets.lift * speechLiftGain, (speechState.liveSupportTargets.lift || 0) * 0.76);
+      supportTargets.surprised = Math.max(supportTargets.surprised, (speechState.liveSupportTargets.surprised || 0) * 0.74);
+
+      for (const viseme of MOUTH_VISEMES) {
+        setDirectSpeechMorphValue(
+          viseme,
+          THREE.MathUtils.clamp(
+            fixedGirlSpeechIntensity > 0.012 ? directTargets[viseme] : 0,
+            0,
+            FIXED_GIRL_SPEECH_DIRECT_LIMIT
+          ),
+          0.28,
+          0.32
+        );
+      }
+
+      const finalDropValue = THREE.MathUtils.clamp(
+        Math.max(
+          supportTargets.drop + fixedGirlOpenStrength * 0.1,
+          fixedGirlSpeechIntensity > 0.012 ? 0.015 + currentPoseWeight * 0.04 : 0
+        ),
+        0,
+        FIXED_GIRL_SPEECH_DROP_LIMIT
+      );
+      const finalLiftValue = THREE.MathUtils.clamp(
+        supportTargets.lift + fixedGirlOpenStrength * 0.02,
+        0,
+        FIXED_GIRL_SPEECH_LIFT_LIMIT
+      );
+      const finalSurprisedValue = THREE.MathUtils.clamp(supportTargets.surprised, 0, FIXED_GIRL_SPEECH_SURPRISED_LIMIT);
+
+      setDirectSupportMorphValue(
+        "open",
+        Math.max(
+          supportTargets.open + fixedGirlOpenStrength * 0.04,
+          fixedGirlSpeechIntensity > 0.012 ? 0.004 + currentPoseWeight * 0.018 : 0
+        ),
+        0.16,
+        0.26
+      );
+      setDirectSupportMorphValue("drop", finalDropValue, 0.2, 0.28);
+      setDirectSupportMorphValue("lift", finalLiftValue, 0.18, 0.24);
+      setDirectSupportMorphValue("surprised", finalSurprisedValue, 0.16, 0.28);
+      setDirectSupportMorphValue("close", fixedGirlSpeechIntensity > 0.012 ? 0 : 0.08, 0.26, 0.4);
+      setDirectSupportMorphValue("neutral", 0, 0.2, 0.32);
+      setMorphTargetValue(DIRECT_MOUTH_CONFLICT_TARGETS, 0);
+      return;
+    }
+
+    for (const viseme of MOUTH_VISEMES) {
+      const targetNames = DIRECT_MOUTH_MORPH_TARGETS[viseme];
     if (!targetNames) {
       continue;
     }
 
-    let value = (speechState.visemeValues[viseme] || 0) * DIRECT_MOUTH_MORPH_SCALE;
-    if (viseme === "aa" && dominantValue > 0.02) {
+    const rawValue = speechState.visemeValues[viseme] || 0;
+    let value = rawValue * DIRECT_MOUTH_MORPH_SCALE;
+    if (jawlessSpeechActive) {
+      const isDominant = dominantViseme === viseme;
+        const fixedGirlValue = viseme === "ou"
+          ? THREE.MathUtils.clamp(
+              rawValue * 0.82
+                + jawlessOpenStrength * 0.28
+                + (dominantViseme === "ou" ? dominantValue * 0.14 : 0),
+              0,
+              0.96
+            )
+          : viseme === "aa"
+            ? THREE.MathUtils.clamp(
+                rawValue * 0.42
+                  + jawlessOpenStrength * 0.24
+                  + (dominantViseme === "aa" ? dominantValue * 0.16 : 0),
+                0,
+                0.58
+              )
+          : viseme === "ih"
+            ? THREE.MathUtils.clamp(
+                rawValue * 0.12
+                  + (dominantViseme === "ih" || dominantViseme === "ee" ? dominantValue * 0.06 : 0),
+                0,
+                0.16
+              )
+          : viseme === "ee"
+              ? THREE.MathUtils.clamp(rawValue * 0.06, 0, 0.1)
+              : 0;
+      const regularAssist = viseme === "oh"
+        ? jawlessOpenStrength * 0.42
+        : viseme === "ou"
+          ? jawlessOpenStrength * 0.34
+          : 0;
+      const regularValue = isDominant
+        ? THREE.MathUtils.clamp(rawValue * 2.1 + regularAssist, 0, 2.6)
+        : rawValue > dominantValue * 0.72
+          ? THREE.MathUtils.clamp(rawValue * 0.38, 0, 0.42)
+          : 0;
+      value = isFixedGirlModel ? fixedGirlValue : regularValue;
+    } else if (viseme === "aa" && dominantValue > 0.02) {
       value = Math.max(value, dominantValue * DIRECT_MOUTH_OPEN_SUPPORT);
     }
-    setMorphTargetValue(targetNames, value);
+
+    setDirectSpeechMorphValue(viseme, value, jawlessSpeechActive ? 0.16 : 0.18, 0.24);
   }
 
-  const aaValue = speechState.visemeValues.aa || 0;
-  const ohValue = speechState.visemeValues.oh || 0;
   const openValue = speechState.active
     ? THREE.MathUtils.clamp(speechEnergy * DIRECT_MOUTH_LARGE_SCALE + aaValue * 0.34 + ohValue * 0.26, 0, 1)
     : 0;
@@ -1845,13 +2683,146 @@ function applyDirectMouthMorphFallback() {
   const surprisedValue = speechState.active
     ? THREE.MathUtils.clamp((aaValue * 0.78 + ohValue * 0.6 + speechEnergy * 0.22) * DIRECT_MOUTH_SURPRISED_SCALE, 0, 0.92)
     : 0;
-  setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.open, openValue);
-  setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.drop, dropValue);
-  setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.lift, liftValue);
-  setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.surprised, surprisedValue);
-  setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.close, 0);
-  setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS.neutral, 0);
+  const finalOpenValue = jawlessSpeechActive
+    ? 0
+    : openValue;
+    const finalDropValue = jawlessSpeechActive
+      ? THREE.MathUtils.clamp(
+          isFixedGirlModel
+            ? 0.18 + jawlessOpenStrength * 0.28 + dominantValue * 0.12 + aaValue * 0.14 + ouValue * 0.08
+            : 0.46 + jawlessOpenStrength * 1.85 + aaValue * 0.72 + ohValue * 0.62 + ouValue * 0.36,
+          isFixedGirlModel ? 0.18 : 0.46,
+          isFixedGirlModel ? 0.72 : 2.7
+        )
+      : dropValue;
+    const finalLiftValue = jawlessSpeechActive
+      ? isFixedGirlModel
+        ? THREE.MathUtils.clamp(
+            0.28
+              + jawlessOpenStrength * 0.34
+              + dominantValue * 0.18
+              + ihValue * 0.06,
+            0.28,
+            0.82
+          )
+        : 0
+      : liftValue;
+    const finalSurprisedValue = jawlessSpeechActive
+      ? THREE.MathUtils.clamp(
+          aaValue * (isFixedGirlModel ? 0.06 : 0.28)
+            + ohValue * (isFixedGirlModel ? 0.05 : 0.22)
+            + ouValue * (isFixedGirlModel ? 0.04 : 0.16)
+            + speechEnergy * (isFixedGirlModel ? 0.04 : 0.18),
+          0,
+          isFixedGirlModel ? 0.16 : 0.72
+        )
+      : surprisedValue;
+  const finalCloseValue = jawlessSpeechActive
+    ? 0
+    : !hasJawBone
+      ? THREE.MathUtils.clamp(0.16 - mouthActivity * 1.1, 0, 0.16)
+      : 0;
+  setDirectSupportMorphValue("open", finalOpenValue, jawlessSpeechActive ? 0.14 : 0.18, 0.28);
+  setDirectSupportMorphValue("drop", finalDropValue, jawlessSpeechActive ? 0.14 : 0.2, jawlessSpeechActive ? 0.24 : 0.3);
+  setDirectSupportMorphValue("lift", finalLiftValue, 0.14, 0.34);
+  setDirectSupportMorphValue("surprised", finalSurprisedValue, 0.14, 0.34);
+  setDirectSupportMorphValue("close", finalCloseValue, 0.26, 0.4);
+  setDirectSupportMorphValue("neutral", 0, 0.2, 0.32);
   setMorphTargetValue(DIRECT_MOUTH_CONFLICT_TARGETS, 0);
+}
+
+function startMouthDiagnosticTest() {
+  if (!currentMorphTargetBindings?.size) {
+    return;
+  }
+
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+  stopLipSync(currentVrm, true);
+  mouthDiagnosticState.active = true;
+  mouthDiagnosticState.startedAtMs = performance.now();
+  setStatus("口テスト中");
+}
+
+function getMouthDiagnosticStep(elapsedMs) {
+  const steps = currentModel === FIXED_MODEL_NAME
+    ? FIXED_GIRL_DIAGNOSTIC_STEPS
+    : [
+        {
+          durationMs: 220,
+          visemes: {},
+          support: { close: 0.18 }
+        },
+        {
+          durationMs: 720,
+          visemes: { ou: 0.74, aa: 0.26, ih: 0.08 },
+          support: { drop: 0.26, lift: 0.42 }
+        },
+        {
+          durationMs: 720,
+          visemes: { ou: 0.86, aa: 0.34, ih: 0.12 },
+          support: { drop: 0.32, lift: 0.56 }
+        },
+        {
+          durationMs: 640,
+          visemes: { ou: 0.66, aa: 0.2, ih: 0.06 },
+          support: { drop: 0.22, lift: 0.34 }
+        },
+        {
+          durationMs: 260,
+          visemes: {},
+          support: { close: 0.16 }
+        }
+      ];
+
+  let cursorMs = 0;
+  for (const step of steps) {
+    cursorMs += step.durationMs;
+    if (elapsedMs <= cursorMs) {
+      return step;
+    }
+  }
+  return null;
+}
+
+function applyMouthDiagnosticStep(vrmRef = currentVrm) {
+  if (!mouthDiagnosticState.active) {
+    return false;
+  }
+
+  const elapsedMs = performance.now() - mouthDiagnosticState.startedAtMs;
+  const step = getMouthDiagnosticStep(elapsedMs);
+  if (!step) {
+    mouthDiagnosticState.active = false;
+    resetVisemes(vrmRef);
+    setStatus(currentVrm ? "Ready" : "Loading avatar...");
+    return false;
+  }
+
+  const manager = vrmRef?.expressionManager;
+  if (manager) {
+    for (const viseme of MOUTH_VISEMES) {
+      setVisemeValue(manager, viseme, 0);
+      speechState.visemeValues[viseme] = 0;
+    }
+  }
+
+  for (const key of DIRECT_SUPPORT_KEYS) {
+    speechState.supportValues[key] = 0;
+  }
+  setMorphTargetValue(Object.values(DIRECT_MOUTH_MORPH_TARGETS).flat(), 0);
+  setMorphTargetValue(Object.values(DIRECT_MOUTH_SUPPORT_TARGETS).flat(), 0);
+  setMorphTargetValue(DIRECT_MOUTH_CONFLICT_TARGETS, 0);
+
+  for (const [viseme, value] of Object.entries(step.visemes || {})) {
+    setMorphTargetValue(DIRECT_MOUTH_MORPH_TARGETS[viseme], value);
+  }
+  for (const [key, value] of Object.entries(step.support || {})) {
+    setMorphTargetValue(DIRECT_MOUTH_SUPPORT_TARGETS[key], value);
+  }
+
+  return true;
 }
 
 function buildLipSyncFrames(text) {
@@ -1868,6 +2839,26 @@ function buildLipSyncFrames(text) {
       hintEndMs: hintCursorMs + durationMs
     });
     hintCursorMs += durationMs;
+  };
+
+  const pushPatternFrames = (char, pattern, strengthScale = 1, durationScale = 1) => {
+    const normalizedPattern = Array.isArray(pattern) && pattern.length
+      ? pattern
+      : [{ viseme: "aa", durationMs: 120, strength: 0.4 }];
+    const utf16Start = utf16Index;
+    const utf16End = utf16Index + char.length;
+
+    for (const part of normalizedPattern) {
+      pushFrame({
+        char,
+        viseme: part.viseme,
+        durationMs: Math.max(64, Math.round((Number(part.durationMs) || 0) * durationScale)),
+        strength: THREE.MathUtils.clamp((Number(part.strength) || 0.4) * strengthScale, 0.18, 0.78),
+        utf16Start,
+        utf16End
+      });
+      previousViseme = part.viseme || previousViseme;
+    }
   };
 
   for (const char of Array.from(String(text || ""))) {
@@ -1936,16 +2927,7 @@ function buildLipSyncFrames(text) {
       previousViseme = viseme;
     } else if (isCjkIdeograph(char)) {
       const pattern = selectVisemePattern(char, CJK_VISEME_PATTERNS);
-      const collapsed = collapseVisemePattern(pattern, 0.68);
-      pushFrame({
-        char,
-        viseme: collapsed.viseme,
-        durationMs: collapsed.durationMs,
-        strength: collapsed.strength,
-        utf16Start: utf16Index,
-        utf16End: utf16Index + char.length
-      });
-      previousViseme = collapsed.viseme;
+      pushPatternFrames(char, pattern, 0.72, 0.84);
     } else {
       const pattern = selectVisemePattern(char, FALLBACK_VISEME_PATTERNS);
       const collapsed = collapseVisemePattern(pattern, 0.62);
@@ -1984,6 +2966,13 @@ function clearLipSyncTimer() {
   }
 }
 
+function clearSpeechBootstrapWatcher() {
+  if (speechState.bootstrapWatcherId) {
+    window.clearInterval(speechState.bootstrapWatcherId);
+    speechState.bootstrapWatcherId = 0;
+  }
+}
+
 function scheduleLipSyncTimeout(delayMs) {
   clearLipSyncTimer();
   speechState.fallbackTimerId = window.setTimeout(() => {
@@ -1993,6 +2982,10 @@ function scheduleLipSyncTimeout(delayMs) {
 
 function resetVisemes(vrmRef) {
   const manager = vrmRef?.expressionManager;
+  for (const viseme of MOUTH_VISEMES) {
+    speechState.directMorphValues[viseme] = 0;
+    speechState.frameTargets[viseme] = 0;
+  }
   if (manager) {
     for (const viseme of MOUTH_VISEMES) {
       speechState.visemeValues[viseme] = 0;
@@ -2000,7 +2993,9 @@ function resetVisemes(vrmRef) {
     }
   }
 
-  const jaw = vrmRef?.humanoid?.getNormalizedBoneNode("jaw");
+  resetLiveSpeechMorphTargets();
+
+  const jaw = getJawBoneNode(vrmRef);
   if (jaw) {
     if (typeof jaw.userData.defaultLipSyncRotationX !== "number") {
       jaw.userData.defaultLipSyncRotationX = jaw.rotation.x;
@@ -2008,6 +3003,12 @@ function resetVisemes(vrmRef) {
     speechState.jawValue = 0;
     jaw.rotation.x = jaw.userData.defaultLipSyncRotationX;
   }
+
+  for (const key of DIRECT_SUPPORT_KEYS) {
+    speechState.supportValues[key] = 0;
+  }
+  setMorphTargetValue(Object.values(DIRECT_MOUTH_SUPPORT_TARGETS).flat(), 0);
+  setMorphTargetValue(DIRECT_MOUTH_CONFLICT_TARGETS, 0);
 }
 
 function setExpressionValue(manager, presetName, value) {
@@ -2079,24 +3080,33 @@ function applyConversationMotion(vrmRef, elapsed) {
   }
 
   const nowMs = performance.now();
-  if (!speechState.active && nowMs > motionState.holdUntilMs) {
+  if (!speechState.active && nowMs > motionState.holdUntilMs && motionState.activeGesture !== "thinking") {
     setMotionGesture("idle", 0, 0);
   }
 
+  const currentWeight = motionState.currentWeight || 0;
+  const fadingReleaseGesture = motionState.activeGesture === "idle" && currentWeight > 0.006
+    ? motionState.releaseGesture
+    : "idle";
   const primaryGesture = motionState.activeGesture === "thinking"
     ? "idle"
-    : motionState.activeGesture;
-  const baseTargetWeight = primaryGesture === "idle"
+    : (motionState.activeGesture === "idle" ? fadingReleaseGesture : motionState.activeGesture);
+  const baseTargetWeight = motionState.activeGesture === "idle" || motionState.activeGesture === "thinking"
     ? 0
     : THREE.MathUtils.clamp(
         0.18 + motionState.emphasis * 0.76 + (speechState.active ? 0.08 : 0),
         0,
         1
       );
-  const targetWeight = baseTargetWeight;
-  const weightLerp = speechState.active ? 0.22 : 0.1;
+  const speechMotionScale = speechState.active ? 0.54 : 1;
+  const targetWeight = baseTargetWeight * speechMotionScale;
+  const weightLerp = speechState.active
+    ? 0.14
+    : targetWeight > currentWeight
+      ? 0.1
+      : 0.055;
   motionState.currentWeight = THREE.MathUtils.lerp(
-    motionState.currentWeight || 0,
+    currentWeight,
     targetWeight,
     weightLerp
   );
@@ -2114,27 +3124,50 @@ function applyConversationMotion(vrmRef, elapsed) {
     : 1;
   const effectiveThinkingTarget = thinkingTarget * thinkingRamp;
   const thinkingLerp = effectiveThinkingTarget > (motionState.thinkingPoseWeight || 0)
-    ? 0.055
-    : 0.038;
+    ? 0.032
+    : 0.016;
   motionState.thinkingPoseWeight = THREE.MathUtils.lerp(
     motionState.thinkingPoseWeight || 0,
     effectiveThinkingTarget,
     thinkingLerp
   );
 
+  if (
+    motionState.activeGesture === "thinking"
+    && effectiveThinkingTarget < 0.001
+    && (motionState.thinkingPoseWeight || 0) < 0.004
+  ) {
+    motionState.activeGesture = "idle";
+  }
+
+  if (motionState.activeGesture === "idle" && (motionState.currentWeight || 0) < 0.01) {
+    motionState.releaseGesture = "idle";
+  }
+
   const weight = motionState.currentWeight;
   const thinkingWeight = motionState.thinkingPoseWeight || 0;
   if (weight < 0.004 && thinkingWeight < 0.004) {
     return;
   }
+  const speechHeadScale = speechState.active ? 0.1 : 1;
+  const speechTorsoScale = speechState.active ? 0.64 : 1;
+  const speechArmScale = speechState.active ? 0.72 : 1;
+  const speechThinkingScale = speechState.active ? 0.42 : 1;
+  const torsoWeight = weight * speechTorsoScale;
+  const headWeight = weight * speechHeadScale;
+  const armWeight = weight * speechArmScale;
+  const thinkingTorsoWeight = thinkingWeight * speechThinkingScale;
+  const thinkingHeadWeight = thinkingWeight * speechThinkingScale;
 
   const spine = humanoid.getNormalizedBoneNode("spine");
   const chest = humanoid.getNormalizedBoneNode("chest");
   const neck = humanoid.getNormalizedBoneNode("neck");
   const head = humanoid.getNormalizedBoneNode("head");
+  const leftShoulder = humanoid.getNormalizedBoneNode("leftShoulder");
   const leftUpperArm = humanoid.getNormalizedBoneNode("leftUpperArm");
   const leftLowerArm = humanoid.getNormalizedBoneNode("leftLowerArm");
   const leftHand = humanoid.getNormalizedBoneNode("leftHand");
+  const rightShoulder = humanoid.getNormalizedBoneNode("rightShoulder");
   const rightUpperArm = humanoid.getNormalizedBoneNode("rightUpperArm");
   const rightLowerArm = humanoid.getNormalizedBoneNode("rightLowerArm");
   const rightHand = humanoid.getNormalizedBoneNode("rightHand");
@@ -2143,90 +3176,91 @@ function applyConversationMotion(vrmRef, elapsed) {
     : 0.38 + 0.24 * Math.sin(elapsed * 2.2);
 
   if (thinkingWeight > 0.003) {
-    addBoneRotation(spine, 0.005 * thinkingWeight, 0, -0.006 * thinkingWeight);
-    addBoneRotation(chest, 0.006 * thinkingWeight, 0, -0.01 * thinkingWeight);
+    addBoneRotation(spine, 0.005 * thinkingTorsoWeight, 0, -0.006 * thinkingTorsoWeight);
+    addBoneRotation(chest, 0.006 * thinkingTorsoWeight, 0, -0.01 * thinkingTorsoWeight);
     addBoneRotation(
       neck,
-      0.008 * thinkingWeight + Math.sin(elapsed * 0.98) * 0.0025 * thinkingWeight,
-      0.008 * thinkingWeight,
-      -0.03 * thinkingWeight
+      0.008 * thinkingHeadWeight + Math.sin(elapsed * 0.98) * 0.0025 * thinkingHeadWeight,
+      0.008 * thinkingHeadWeight,
+      -0.03 * thinkingHeadWeight
     );
     addBoneRotation(
       head,
-      0.013 * thinkingWeight + Math.sin(elapsed * 1.08) * 0.0035 * thinkingWeight,
-      0.012 * thinkingWeight,
-      -0.054 * thinkingWeight
+      0.013 * thinkingHeadWeight + Math.sin(elapsed * 1.08) * 0.0035 * thinkingHeadWeight,
+      0.012 * thinkingHeadWeight,
+      -0.054 * thinkingHeadWeight
     );
-    addBoneRotation(leftUpperArm, -0.004 * thinkingWeight, -0.028 * thinkingWeight, 0.045 * thinkingWeight);
-    addBoneRotation(leftLowerArm, -0.012 * thinkingWeight, 0, 0.032 * thinkingWeight);
-    addBoneRotation(rightUpperArm, 0.004 * thinkingWeight, -0.008 * thinkingWeight, -0.014 * thinkingWeight);
-    addBoneRotation(rightLowerArm, 0.007 * thinkingWeight, 0, -0.01 * thinkingWeight);
+    addBoneRotation(leftUpperArm, -0.004 * thinkingTorsoWeight, -0.028 * thinkingTorsoWeight, 0.045 * thinkingTorsoWeight);
+    addBoneRotation(leftLowerArm, -0.012 * thinkingTorsoWeight, 0, 0.032 * thinkingTorsoWeight);
+    addBoneRotation(rightUpperArm, 0.004 * thinkingTorsoWeight, -0.008 * thinkingTorsoWeight, -0.014 * thinkingTorsoWeight);
+    addBoneRotation(rightLowerArm, 0.007 * thinkingTorsoWeight, 0, -0.01 * thinkingTorsoWeight);
   }
 
   switch (primaryGesture) {
     case "explain":
-        addBoneRotation(spine, 0.016 * weight, Math.sin(elapsed * 1.6) * 0.014 * weight, 0);
-        addBoneRotation(chest, 0.012 * weight, Math.sin(elapsed * 1.8 + 0.4) * 0.02 * weight, 0);
-      addBoneRotation(neck, Math.sin(elapsed * 2.1) * 0.008 * weight, 0.016 * weight, 0);
-      addBoneRotation(head, Math.sin(elapsed * 2.3) * 0.014 * weight, 0.02 * weight, 0);
-      addBoneRotation(rightUpperArm, -0.08 * weight - 0.04 * talkingPulse * weight, -0.1 * weight, 0.14 * weight);
-      addBoneRotation(rightLowerArm, -0.08 * talkingPulse * weight, -0.04 * weight, 0.18 * weight);
-      addBoneRotation(rightHand, 0, -0.04 * weight, 0.08 * talkingPulse * weight);
-      addBoneRotation(leftUpperArm, -0.02 * weight, 0.04 * weight, -0.06 * weight);
+        addBoneRotation(spine, 0.016 * torsoWeight, Math.sin(elapsed * 1.6) * 0.014 * torsoWeight, 0);
+        addBoneRotation(chest, 0.012 * torsoWeight, Math.sin(elapsed * 1.8 + 0.4) * 0.02 * torsoWeight, 0);
+      addBoneRotation(neck, Math.sin(elapsed * 2.1) * 0.008 * headWeight, 0.016 * headWeight, 0);
+      addBoneRotation(head, Math.sin(elapsed * 2.3) * 0.014 * headWeight, 0.02 * headWeight, 0);
+      addBoneRotation(rightUpperArm, -0.08 * armWeight - 0.04 * talkingPulse * armWeight, -0.1 * armWeight, 0.14 * armWeight);
+      addBoneRotation(rightLowerArm, -0.08 * talkingPulse * armWeight, -0.04 * armWeight, 0.18 * armWeight);
+      addBoneRotation(rightHand, 0, -0.04 * armWeight, 0.08 * talkingPulse * armWeight);
+      addBoneRotation(leftUpperArm, -0.02 * armWeight, 0.04 * armWeight, -0.06 * armWeight);
       break;
     case "happy":
-      addBoneRotation(spine, 0.012 * weight + Math.sin(elapsed * 4.2) * 0.016 * weight, Math.sin(elapsed * 2.8) * 0.012 * weight, 0);
-      addBoneRotation(chest, 0.016 * weight + Math.sin(elapsed * 4.2 + 0.4) * 0.012 * weight, 0, Math.sin(elapsed * 3.1) * 0.012 * weight);
-      addBoneRotation(neck, -0.01 * weight, 0, 0);
-      addBoneRotation(head, -0.03 * weight + Math.sin(elapsed * 4.2 + 0.6) * 0.018 * weight, 0, Math.sin(elapsed * 3.4) * 0.01 * weight);
-      addBoneRotation(leftUpperArm, -0.05 * weight, 0.1 * weight, -0.08 * weight);
-      addBoneRotation(rightUpperArm, -0.05 * weight, -0.1 * weight, 0.08 * weight);
-      addBoneRotation(leftLowerArm, 0.02 * weight, 0, -0.08 * talkingPulse * weight);
-      addBoneRotation(rightLowerArm, 0.02 * weight, 0, 0.08 * talkingPulse * weight);
+      addBoneRotation(spine, 0.012 * torsoWeight + Math.sin(elapsed * 4.2) * 0.016 * torsoWeight, Math.sin(elapsed * 2.8) * 0.012 * torsoWeight, 0);
+      addBoneRotation(chest, 0.016 * torsoWeight + Math.sin(elapsed * 4.2 + 0.4) * 0.012 * torsoWeight, 0, Math.sin(elapsed * 3.1) * 0.012 * torsoWeight);
+      addBoneRotation(neck, -0.01 * headWeight, 0, 0);
+      addBoneRotation(head, -0.03 * headWeight + Math.sin(elapsed * 4.2 + 0.6) * 0.018 * headWeight, 0, Math.sin(elapsed * 3.4) * 0.01 * headWeight);
+      addBoneRotation(leftUpperArm, -0.05 * armWeight, 0.1 * armWeight, -0.08 * armWeight);
+      addBoneRotation(rightUpperArm, -0.05 * armWeight, -0.1 * armWeight, 0.08 * armWeight);
+      addBoneRotation(leftLowerArm, 0.02 * armWeight, 0, -0.08 * talkingPulse * armWeight);
+      addBoneRotation(rightLowerArm, 0.02 * armWeight, 0, 0.08 * talkingPulse * armWeight);
       break;
     case "warn":
-      addBoneRotation(spine, 0.03 * weight, 0, 0);
-      addBoneRotation(chest, 0.024 * weight, 0, 0);
-      addBoneRotation(neck, 0, Math.sin(elapsed * 3.8) * 0.022 * weight, 0);
-      addBoneRotation(head, 0, Math.sin(elapsed * 3.8) * 0.034 * weight, 0);
-      addBoneRotation(rightUpperArm, -0.1 * weight, -0.14 * weight, 0.16 * weight);
-      addBoneRotation(rightLowerArm, -0.08 * weight, -0.05 * weight, 0.22 * weight);
-      addBoneRotation(rightHand, 0, -0.06 * weight, 0.08 * weight);
-      addBoneRotation(leftUpperArm, -0.01 * weight, 0.03 * weight, -0.03 * weight);
+      addBoneRotation(spine, 0.03 * torsoWeight, 0, 0);
+      addBoneRotation(chest, 0.024 * torsoWeight, 0, 0);
+      addBoneRotation(neck, 0, Math.sin(elapsed * 3.8) * 0.022 * headWeight, 0);
+      addBoneRotation(head, 0, Math.sin(elapsed * 3.8) * 0.034 * headWeight, 0);
+      addBoneRotation(rightUpperArm, -0.1 * armWeight, -0.14 * armWeight, 0.16 * armWeight);
+      addBoneRotation(rightLowerArm, -0.08 * armWeight, -0.05 * armWeight, 0.22 * armWeight);
+      addBoneRotation(rightHand, 0, -0.06 * armWeight, 0.08 * armWeight);
+      addBoneRotation(leftUpperArm, -0.01 * armWeight, 0.03 * armWeight, -0.03 * armWeight);
       break;
     case "shy":
-      addBoneRotation(spine, -0.016 * weight, 0, 0);
-      addBoneRotation(chest, -0.01 * weight, 0, 0);
-      addBoneRotation(neck, 0.024 * weight, 0.018 * weight, 0);
-      addBoneRotation(head, 0.05 * weight, 0.03 * weight, -0.014 * weight);
-      addBoneRotation(leftUpperArm, 0.04 * weight, -0.07 * weight, 0.08 * weight);
-      addBoneRotation(rightUpperArm, 0.04 * weight, 0.07 * weight, -0.08 * weight);
-      addBoneRotation(leftLowerArm, 0.03 * weight, 0, 0.06 * weight);
-      addBoneRotation(rightLowerArm, 0.03 * weight, 0, -0.06 * weight);
+      addBoneRotation(spine, -0.016 * torsoWeight, 0, 0);
+      addBoneRotation(chest, -0.01 * torsoWeight, 0, 0);
+      addBoneRotation(neck, 0.024 * headWeight, 0.018 * headWeight, 0);
+      addBoneRotation(head, 0.05 * headWeight, 0.03 * headWeight, -0.014 * headWeight);
+      addBoneRotation(leftUpperArm, 0.04 * armWeight, -0.07 * armWeight, 0.08 * armWeight);
+      addBoneRotation(rightUpperArm, 0.04 * armWeight, 0.07 * armWeight, -0.08 * armWeight);
+      addBoneRotation(leftLowerArm, 0.03 * armWeight, 0, 0.06 * armWeight);
+      addBoneRotation(rightLowerArm, 0.03 * armWeight, 0, -0.06 * armWeight);
       break;
     case "surprised":
-      addBoneRotation(spine, -0.02 * weight, 0, 0);
-      addBoneRotation(chest, -0.018 * weight, 0, 0);
-      addBoneRotation(neck, -0.022 * weight, 0, 0);
-      addBoneRotation(head, -0.05 * weight - Math.sin(elapsed * 5.6) * 0.01 * weight, 0, Math.sin(elapsed * 4.1) * 0.01 * weight);
-      addBoneRotation(leftUpperArm, -0.08 * weight, 0.11 * weight, -0.1 * weight);
-      addBoneRotation(rightUpperArm, -0.08 * weight, -0.11 * weight, 0.1 * weight);
-      addBoneRotation(leftLowerArm, -0.03 * weight, 0, -0.05 * weight);
-      addBoneRotation(rightLowerArm, -0.03 * weight, 0, 0.05 * weight);
+      addBoneRotation(spine, -0.02 * torsoWeight, 0, 0);
+      addBoneRotation(chest, -0.018 * torsoWeight, 0, 0);
+      addBoneRotation(neck, -0.022 * headWeight, 0, 0);
+      addBoneRotation(head, -0.05 * headWeight - Math.sin(elapsed * 5.6) * 0.01 * headWeight, 0, Math.sin(elapsed * 4.1) * 0.01 * headWeight);
+      addBoneRotation(leftUpperArm, -0.08 * armWeight, 0.11 * armWeight, -0.1 * armWeight);
+      addBoneRotation(rightUpperArm, -0.08 * armWeight, -0.11 * armWeight, 0.1 * armWeight);
+      addBoneRotation(leftLowerArm, -0.03 * armWeight, 0, -0.05 * armWeight);
+      addBoneRotation(rightLowerArm, -0.03 * armWeight, 0, 0.05 * armWeight);
       break;
     default:
-      addBoneRotation(spine, 0.008 * weight, Math.sin(elapsed * 1.7) * 0.01 * weight, 0);
-      addBoneRotation(chest, 0.006 * weight, Math.sin(elapsed * 1.9 + 0.4) * 0.012 * weight, 0);
-      addBoneRotation(head, Math.sin(elapsed * 1.8) * 0.008 * weight, Math.sin(elapsed * 2.1) * 0.01 * weight, 0);
-      addBoneRotation(rightUpperArm, -0.03 * weight, -0.04 * weight, 0.08 * weight);
-      addBoneRotation(rightLowerArm, -0.04 * talkingPulse * weight, 0, 0.08 * weight);
-      addBoneRotation(leftHand, 0, 0, Math.sin(elapsed * 2.2) * 0.008 * weight);
+      addBoneRotation(spine, 0.008 * torsoWeight, Math.sin(elapsed * 1.7) * 0.01 * torsoWeight, 0);
+      addBoneRotation(chest, 0.006 * torsoWeight, Math.sin(elapsed * 1.9 + 0.4) * 0.012 * torsoWeight, 0);
+      addBoneRotation(head, Math.sin(elapsed * 1.8) * 0.008 * headWeight, Math.sin(elapsed * 2.1) * 0.01 * headWeight, 0);
+      addBoneRotation(rightUpperArm, -0.03 * armWeight, -0.04 * armWeight, 0.08 * armWeight);
+      addBoneRotation(rightLowerArm, -0.04 * talkingPulse * armWeight, 0, 0.08 * armWeight);
+      addBoneRotation(leftHand, 0, 0, Math.sin(elapsed * 2.2) * 0.008 * armWeight);
       break;
   }
 }
 
 function stopLipSync(vrmRef = currentVrm, immediate = false) {
   clearLipSyncTimer();
+  clearSpeechBootstrapWatcher();
   speechState.active = false;
   speechState.frames = [];
   speechState.totalDurationMs = 0;
@@ -2241,6 +3275,7 @@ function stopLipSync(vrmRef = currentVrm, immediate = false) {
   speechState.lastBoundaryFrameIndex = -1;
   speechState.lastBoundaryStrength = 0;
   speechState.lastKnownSpeechElapsedMs = 0;
+  resetLiveSpeechMorphTargets();
   if (immediate) {
     resetVisemes(vrmRef);
   }
@@ -2256,15 +3291,26 @@ function startLipSync(text, rate = 1) {
   speechState.startTimeMs = performance.now();
   speechState.active = true;
   speechState.syncMode = "timed";
-  speechState.timingScale = 1 / Math.max(rate, 0.65);
+  const normalizedRate = Math.max(rate, 0.65);
+  speechState.timingScale = (1 / normalizedRate) * (
+    currentModel === FIXED_MODEL_NAME
+      ? FIXED_GIRL_FALLBACK_TIMING_SCALE
+      : 1
+  );
   speechState.timingOffsetMs = 0;
   speechState.currentFrameIndex = speechState.frames.length ? 0 : -1;
   speechState.currentFrameStartedAtMs = speechState.startTimeMs;
   speechState.lastBoundaryAtMs = speechState.startTimeMs;
   speechState.lastKnownSpeechElapsedMs = 0;
+  const charCount = Array.from(String(text || "")).length;
   const estimatedSpeechDurationMs = Math.max(
     speechState.totalDurationMs * speechState.timingScale * 1.18 + 1100,
-    (Array.from(String(text || "")).length * 120) / Math.max(rate, 0.65) + 1100,
+    (
+      charCount
+        * (currentModel === FIXED_MODEL_NAME
+          ? FIXED_GIRL_FALLBACK_CHAR_DURATION_MS
+          : 120)
+    ) / normalizedRate + 1100,
     1800
   );
   scheduleLipSyncTimeout(estimatedSpeechDurationMs);
@@ -2319,16 +3365,12 @@ function getLipSyncHintElapsedMs(nowMs) {
   const actualElapsedMs = getActualSpeechElapsedMs(nowMs);
   speechState.lastKnownSpeechElapsedMs = actualElapsedMs;
   const scale = THREE.MathUtils.clamp(speechState.timingScale || 1, 0.35, 3.6);
-  return Math.max(0, (actualElapsedMs - (speechState.timingOffsetMs || 0)) / scale);
+  const leadMs = currentModel === FIXED_MODEL_NAME ? FIXED_GIRL_SPEECH_LEAD_MS : 0;
+  return Math.max(0, (actualElapsedMs + leadMs - (speechState.timingOffsetMs || 0)) / scale);
 }
 
 function syncLipSyncToSpeechBoundary(event) {
   if (!speechState.active) {
-    return;
-  }
-
-  const frameIndex = findLipSyncFrameIndexByCharOffset(Number(event?.charIndex));
-  if (frameIndex < 0) {
     return;
   }
 
@@ -2337,6 +3379,41 @@ function syncLipSyncToSpeechBoundary(event) {
   const actualElapsedMs = Number.isFinite(rawElapsedSeconds) && rawElapsedSeconds >= 0
     ? rawElapsedSeconds * 1000
     : Math.max(0, nowMs - speechState.startTimeMs);
+
+  if (FIXED_GIRL_DISABLE_BOUNDARY_SYNC && currentModel === FIXED_MODEL_NAME) {
+    const frameIndex = findLipSyncFrameIndexByCharOffset(Number(event?.charIndex));
+    const frame = frameIndex >= 0 ? speechState.frames[frameIndex] || null : null;
+    const hintElapsedMs = frame
+      ? frame.hintStartMs + frame.durationMs * (frame.viseme ? 0.08 : 0.28)
+      : speechState.totalDurationMs;
+    if (hintElapsedMs > 12) {
+      const expectedElapsedMs = hintElapsedMs * (speechState.timingScale || 1);
+      const nextOffsetMs = actualElapsedMs - expectedElapsedMs;
+      speechState.timingOffsetMs = THREE.MathUtils.lerp(
+        speechState.timingOffsetMs || 0,
+        nextOffsetMs,
+        0.42
+      );
+    }
+    speechState.boundarySupported = true;
+    speechState.syncMode = "timed";
+    speechState.startTimeMs = nowMs - actualElapsedMs;
+    speechState.lastBoundaryAtMs = nowMs;
+    speechState.lastBoundaryFrameIndex = frameIndex;
+    speechState.lastBoundaryStrength = frame?.strength || 0.72;
+    speechState.lastKnownSpeechElapsedMs = actualElapsedMs;
+    const remainingActualMs = Math.max(
+      0,
+      speechState.totalDurationMs * (speechState.timingScale || 1) - actualElapsedMs
+    );
+    scheduleLipSyncTimeout(Math.max(remainingActualMs + 1200, 1500));
+    return;
+  }
+
+  const frameIndex = findLipSyncFrameIndexByCharOffset(Number(event?.charIndex));
+  if (frameIndex < 0) {
+    return;
+  }
   speechState.startTimeMs = nowMs - actualElapsedMs;
   const frame = speechState.frames[frameIndex] || null;
   const hintElapsedMs = frame
@@ -2368,7 +3445,9 @@ function syncLipSyncToSpeechBoundary(event) {
 
 function applyLipSync(vrmRef) {
   const manager = vrmRef?.expressionManager;
-  const jaw = vrmRef?.humanoid?.getNormalizedBoneNode("jaw");
+  const jaw = getJawBoneNode(vrmRef);
+  const useDirectMorphSpeech = !jaw && hasDirectSpeechMorphTargets();
+  const useFixedGirlDirectSpeech = useDirectMorphSpeech && currentModel === FIXED_MODEL_NAME;
 
   if (!manager && !jaw) {
     return;
@@ -2376,6 +3455,8 @@ function applyLipSync(vrmRef) {
 
   const targetValues = Object.fromEntries(MOUTH_VISEMES.map((viseme) => [viseme, 0]));
   let targetJaw = 0;
+  let fixedGirlLiveTargets = null;
+  let fixedGirlLiveSupport = null;
 
   if (speechState.active) {
     const nowMs = performance.now();
@@ -2399,15 +3480,85 @@ function applyLipSync(vrmRef) {
         1
       );
       const openCurve = Math.sin(Math.PI * THREE.MathUtils.clamp(frameProgress * 0.88 + 0.06, 0, 1));
-      const currentPulse = silentFrame
-        ? 0
-        : (currentFrame.strength || 0) * (0.14 + openCurve * 0.64);
+        const currentPulse = silentFrame
+          ? 0
+          : (currentFrame.strength || 0) * (
+              useFixedGirlDirectSpeech
+                ? 0.16 + openCurve * 0.42
+                : 0.14 + openCurve * 0.64
+            );
       const currentJawOpen = getJawOpennessForViseme(currentFrame.viseme);
       const nextJawOpen = getJawOpennessForViseme(nextFrame?.viseme);
       const crossFadeToNext = silentFrame
-        ? THREE.MathUtils.smoothstep(frameProgress, 0.88, 1)
+        ? THREE.MathUtils.smoothstep(frameProgress, 0.97, 1)
         : THREE.MathUtils.smoothstep(frameProgress, 0.66, 0.94);
       const holdCurrent = silentFrame ? 0 : 1 - crossFadeToNext * 0.22;
+
+      if (useFixedGirlDirectSpeech && !silentFrame) {
+        fixedGirlLiveTargets = Object.fromEntries(MOUTH_VISEMES.map((viseme) => [viseme, 0]));
+        fixedGirlLiveSupport = { drop: 0, lift: 0, surprised: 0 };
+        const currentFrameStrength = THREE.MathUtils.clamp(
+          (currentFrame.strength || 0) * (0.46 + openCurve * 0.34),
+          0,
+          0.72
+        );
+        if (currentFrame.viseme) {
+          fixedGirlLiveTargets[currentFrame.viseme] = Math.max(
+            fixedGirlLiveTargets[currentFrame.viseme],
+            currentFrameStrength * FIXED_GIRL_LIVE_FRAME_DIRECT_FLOOR
+          );
+          fixedGirlLiveTargets.aa = Math.max(
+            fixedGirlLiveTargets.aa,
+            currentFrameStrength * (currentFrame.viseme === "aa" ? 1.22 : 0.76)
+          );
+        }
+        if (nextFrame?.viseme && !isSilentLipSyncFrame(nextFrame)) {
+          fixedGirlLiveTargets[nextFrame.viseme] = Math.max(
+            fixedGirlLiveTargets[nextFrame.viseme],
+            (nextFrame.strength || 0) * crossFadeToNext * FIXED_GIRL_LIVE_FRAME_NEXT_FLOOR
+          );
+        }
+
+        const currentSupportMap = FIXED_GIRL_LIVE_SUPPORT_FLOOR_MAP[currentFrame.viseme] || {};
+        fixedGirlLiveSupport.drop = Math.max(
+          fixedGirlLiveSupport.drop,
+          (currentSupportMap.drop || 0) * (0.54 + currentFrameStrength * 0.92)
+        );
+        fixedGirlLiveSupport.drop = Math.max(
+          fixedGirlLiveSupport.drop,
+          0.08 + currentFrameStrength * 0.18
+        );
+        fixedGirlLiveSupport.lift = Math.max(
+          fixedGirlLiveSupport.lift,
+          (currentSupportMap.lift || 0) * (0.44 + currentFrameStrength * 0.72)
+        );
+          fixedGirlLiveSupport.lift = Math.max(
+            fixedGirlLiveSupport.lift,
+            currentFrame.viseme === "ih" || currentFrame.viseme === "ee"
+            ? 0.015 + currentFrameStrength * 0.032
+            : 0.006 + currentFrameStrength * 0.018
+        );
+        fixedGirlLiveSupport.surprised = Math.max(
+          fixedGirlLiveSupport.surprised,
+          (currentSupportMap.surprised || 0) * (0.36 + currentFrameStrength * 0.42)
+        );
+
+        if (nextFrame?.viseme && !isSilentLipSyncFrame(nextFrame)) {
+          const nextSupportMap = FIXED_GIRL_LIVE_SUPPORT_FLOOR_MAP[nextFrame.viseme] || {};
+          fixedGirlLiveSupport.drop = Math.max(
+            fixedGirlLiveSupport.drop,
+            (nextSupportMap.drop || 0) * crossFadeToNext * 0.72
+          );
+          fixedGirlLiveSupport.lift = Math.max(
+            fixedGirlLiveSupport.lift,
+            (nextSupportMap.lift || 0) * crossFadeToNext * 0.62
+          );
+          fixedGirlLiveSupport.surprised = Math.max(
+            fixedGirlLiveSupport.surprised,
+            (nextSupportMap.surprised || 0) * crossFadeToNext * 0.48
+          );
+        }
+      }
 
       if (!silentFrame && previousFrame?.viseme && frameProgress < 0.12) {
         const carry = previousFrame.strength * (1 - frameProgress / 0.12) * 0.05;
@@ -2417,19 +3568,25 @@ function applyLipSync(vrmRef) {
         );
       }
 
-      if (currentFrame.viseme) {
-        targetValues[currentFrame.viseme] = Math.max(
-          targetValues[currentFrame.viseme],
-          currentPulse * holdCurrent * 1.24
-        );
-      }
+        if (currentFrame.viseme) {
+          targetValues[currentFrame.viseme] = Math.max(
+            targetValues[currentFrame.viseme],
+            currentPulse * holdCurrent * (useFixedGirlDirectSpeech ? 0.92 : 1.24)
+          );
+        }
 
-      if (nextFrame?.viseme) {
-        targetValues[nextFrame.viseme] = Math.max(
-          targetValues[nextFrame.viseme],
-          nextFrame.strength * crossFadeToNext * (silentFrame ? 0.12 : 0.34)
-        );
-      }
+        if (nextFrame?.viseme) {
+          targetValues[nextFrame.viseme] = Math.max(
+            targetValues[nextFrame.viseme],
+            nextFrame.strength * crossFadeToNext * (
+              silentFrame
+                ? (useFixedGirlDirectSpeech ? FIXED_GIRL_SILENT_NEXT_BLEND : 0.12)
+                : useFixedGirlDirectSpeech
+                  ? 0.18
+                  : 0.34
+            )
+          );
+        }
 
       compressLipSyncTargets(targetValues);
 
@@ -2450,6 +3607,10 @@ function applyLipSync(vrmRef) {
       targetJaw = silentFrame
         ? Math.max(dominantJaw * 0.28, (nextFrame?.strength || 0) * nextJawOpen * crossFadeToNext * 0.08)
         : Math.max(dominantJaw * 1.12, speechJawFloor, (nextFrame?.strength || 0) * nextJawOpen * crossFadeToNext * 0.22);
+    }
+
+    for (const viseme of MOUTH_VISEMES) {
+      speechState.frameTargets[viseme] = targetValues[viseme] || 0;
     }
 
     if (speechState.lastBoundaryFrameIndex >= 0) {
@@ -2476,6 +3637,17 @@ function applyLipSync(vrmRef) {
     }
   }
 
+  if (useFixedGirlDirectSpeech && fixedGirlLiveTargets && fixedGirlLiveSupport) {
+    for (const viseme of MOUTH_VISEMES) {
+      speechState.liveDirectTargets[viseme] = fixedGirlLiveTargets[viseme] || 0;
+    }
+    speechState.liveSupportTargets.drop = fixedGirlLiveSupport.drop || 0;
+    speechState.liveSupportTargets.lift = fixedGirlLiveSupport.lift || 0;
+    speechState.liveSupportTargets.surprised = fixedGirlLiveSupport.surprised || 0;
+  } else {
+    resetLiveSpeechMorphTargets();
+  }
+
   const blendFactor = speechState.active
     ? (speechState.boundarySupported ? 0.3 : 0.22)
     : 0.18;
@@ -2494,25 +3666,32 @@ function applyLipSync(vrmRef) {
     for (const viseme of MOUTH_VISEMES) {
       const currentValue = speechState.visemeValues[viseme] || 0;
       const rawTargetValue = targetValues[viseme] || 0;
-      const targetValue = dominantViseme && viseme !== dominantViseme
-        ? rawTargetValue * (silenceDecayMode ? 0.28 : 0.46)
-        : rawTargetValue;
-      const visemeBlendFactor = speechState.active
-        ? silenceDecayMode
-          ? (targetValue > currentValue ? 0.12 : 0.4)
-          : targetValue > currentValue
-            ? (speechState.boundarySupported ? 0.34 : 0.24)
-            : 0.22
-        : 0.18;
-      const nextValue = THREE.MathUtils.lerp(
-        currentValue,
-        targetValue,
-        visemeBlendFactor
-      );
-      speechState.visemeValues[viseme] = nextValue;
-      setVisemeValue(manager, viseme, nextValue);
+        const targetValue = dominantViseme && viseme !== dominantViseme
+          ? rawTargetValue * (silenceDecayMode ? 0.28 : 0.46)
+          : rawTargetValue;
+        const scaledTargetValue = useFixedGirlDirectSpeech
+          ? targetValue * (dominantViseme === viseme ? 1.52 : 1.24)
+          : targetValue;
+        const visemeBlendFactor = speechState.active
+          ? silenceDecayMode
+            ? (scaledTargetValue > currentValue ? (useFixedGirlDirectSpeech ? 0.32 : 0.12) : 0.42)
+            : scaledTargetValue > currentValue
+              ? (
+                  useFixedGirlDirectSpeech
+                    ? (speechState.boundarySupported ? 0.66 : 0.56)
+                    : (speechState.boundarySupported ? 0.34 : 0.24)
+                )
+              : 0.22
+          : 0.18;
+        const nextValue = THREE.MathUtils.lerp(
+          currentValue,
+          scaledTargetValue,
+          visemeBlendFactor
+        );
+        speechState.visemeValues[viseme] = nextValue;
+        setVisemeValue(manager, viseme, useDirectMorphSpeech ? 0 : nextValue);
+      }
     }
-  }
 
   if (jaw) {
     if (typeof jaw.userData.defaultLipSyncRotationX !== "number") {
@@ -2563,34 +3742,83 @@ function speak(text) {
 
   refreshAvailableVoices();
 
-  const rate = 1;
+  const rate = CUTE_VOICE_RATE;
   const voice = getPreferredSpeechVoice(voiceSettings);
   const utterance = new SpeechSynthesisUtterance(text);
+  const waitForBoundaryBootstrap = currentModel === FIXED_MODEL_NAME;
+  const utteranceToken = (speechState.activeUtteranceToken || 0) + 1;
+  speechState.activeUtteranceToken = utteranceToken;
+  let lipSyncBootstrapped = false;
+  clearSpeechBootstrapWatcher();
+  const beginLipSync = () => {
+    if (lipSyncBootstrapped || !isCurrentUtteranceToken(utteranceToken)) {
+      return;
+    }
+    lipSyncBootstrapped = true;
+    clearSpeechBootstrapWatcher();
+    startLipSync(text, rate);
+  };
   utterance.lang = voice?.lang || "ja-JP";
   utterance.voice = voice || null;
   utterance.rate = rate;
-  utterance.pitch = 1.02;
+  utterance.pitch = CUTE_VOICE_PITCH;
   utterance.onstart = () => {
-    startLipSync(text, rate);
+    if (!isCurrentUtteranceToken(utteranceToken)) {
+      return;
+    }
+    if (!waitForBoundaryBootstrap) {
+      beginLipSync();
+    }
     if (voiceTools?.voiceStatus) {
       voiceTools.voiceStatus.textContent = "読み上げ中です。";
     }
   };
   utterance.onboundary = (event) => {
+    if (!isCurrentUtteranceToken(utteranceToken)) {
+      return;
+    }
+    beginLipSync();
     syncLipSyncToSpeechBoundary(event);
   };
   utterance.onend = () => {
+    if (!isCurrentUtteranceToken(utteranceToken)) {
+      return;
+    }
+    clearSpeechBootstrapWatcher();
     stopLipSync();
+    speechState.activeUtteranceToken = 0;
     updateVoiceTools();
   };
   utterance.onerror = () => {
+    if (!isCurrentUtteranceToken(utteranceToken)) {
+      return;
+    }
+    clearSpeechBootstrapWatcher();
     stopLipSync();
+    speechState.activeUtteranceToken = 0;
     if (voiceTools?.voiceStatus) {
       voiceTools.voiceStatus.textContent = "音声の再生に失敗しました。";
     }
   };
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);
+  const bootstrapWatchStartedAtMs = performance.now();
+  speechState.bootstrapWatcherId = window.setInterval(() => {
+    if (!isCurrentUtteranceToken(utteranceToken)) {
+      clearSpeechBootstrapWatcher();
+      return;
+    }
+    const waitedMs = performance.now() - bootstrapWatchStartedAtMs;
+    if (window.speechSynthesis.speaking) {
+      if (!waitForBoundaryBootstrap || waitedMs > 260) {
+        beginLipSync();
+      }
+      return;
+    }
+    if (waitedMs > 2200) {
+      beginLipSync();
+    }
+  }, 70);
 }
 
 function applyCameraLookAt(cameraRef, lookTargetRef, pitchDownOffset = 0) {
@@ -2622,9 +3850,10 @@ function applyCameraLookAt(cameraRef, lookTargetRef, pitchDownOffset = 0) {
 function fitAvatarToView(root, cameraRef, lookTargetRef, fileName) {
   const stageSize = measureStage();
   const isMobileViewport = stageSize.width <= MOBILE_STAGE_BREAKPOINT;
+  const rootRotation = MODEL_ROOT_ROTATION_OVERRIDES[fileName] || DEFAULT_ROOT_ROTATION;
   root.rotation.set(
-    isMobileViewport ? MOBILE_MODEL_PITCH_OFFSET : 0,
-    Math.PI + (isMobileViewport ? MOBILE_MODEL_YAW_OFFSET : 0),
+    isMobileViewport ? rootRotation.mobilePitch : 0,
+    rootRotation.yaw + (isMobileViewport ? rootRotation.mobileYawOffset : 0),
     0
   );
   root.position.set(0, 0, 0);
@@ -2879,12 +4108,17 @@ function applyRelaxedPose(vrmRef, elapsed) {
   const chest = humanoid.getNormalizedBoneNode("chest");
   const neck = humanoid.getNormalizedBoneNode("neck");
   const head = humanoid.getNormalizedBoneNode("head");
+  const leftShoulder = humanoid.getNormalizedBoneNode("leftShoulder");
   const leftUpperArm = humanoid.getNormalizedBoneNode("leftUpperArm");
   const leftLowerArm = humanoid.getNormalizedBoneNode("leftLowerArm");
   const leftHand = humanoid.getNormalizedBoneNode("leftHand");
+  const rightShoulder = humanoid.getNormalizedBoneNode("rightShoulder");
   const rightUpperArm = humanoid.getNormalizedBoneNode("rightUpperArm");
   const rightLowerArm = humanoid.getNormalizedBoneNode("rightLowerArm");
   const rightHand = humanoid.getNormalizedBoneNode("rightHand");
+  const relaxedPose = RELAXED_POSE_OVERRIDES[currentModel] || DEFAULT_RELAXED_POSE;
+  const upperBodyPose =
+    RELAXED_UPPER_BODY_OVERRIDES[currentModel] || DEFAULT_RELAXED_UPPER_BODY;
 
   const motionSuppression = THREE.MathUtils.clamp(
     Math.max(motionState.currentWeight || 0, motionState.thinkingPoseWeight || 0),
@@ -2894,66 +4128,79 @@ function applyRelaxedPose(vrmRef, elapsed) {
   const breatheScale = 1 - motionSuppression * 0.45;
   const nodScale = 1 - motionSuppression * 0.82;
   const breathe = Math.sin(elapsed * 0.9) * 0.012 * breatheScale;
-  const nod = Math.sin(elapsed * 0.7) * 0.018 * nodScale;
+  const nod =
+    Math.sin(elapsed * 0.7) * 0.018 * nodScale * (upperBodyPose.nodScale ?? 1);
 
   if (spine) {
-    spine.rotation.x = 0.03 + breathe;
+    spine.rotation.x = upperBodyPose.spineX + breathe;
     spine.rotation.y = 0;
     spine.rotation.z = 0;
   }
 
   if (chest) {
-    chest.rotation.x = 0.02 + breathe * 0.7;
+    chest.rotation.x = upperBodyPose.chestX + breathe * 0.7;
     chest.rotation.y = 0;
     chest.rotation.z = 0;
   }
 
   if (neck) {
-    neck.rotation.x = 0.03 + nod;
+    neck.rotation.x = upperBodyPose.neckX + nod;
     neck.rotation.y = 0;
     neck.rotation.z = 0;
   }
 
   if (head) {
-    head.rotation.x = nod * 0.8;
+    head.rotation.x = upperBodyPose.headX + nod * 0.8;
     head.rotation.y = 0;
     head.rotation.z = 0;
   }
 
+  if (leftShoulder) {
+    leftShoulder.rotation.x = relaxedPose.leftShoulder.x;
+    leftShoulder.rotation.y = relaxedPose.leftShoulder.y;
+    leftShoulder.rotation.z = relaxedPose.leftShoulder.z;
+  }
+
   if (leftUpperArm) {
-    leftUpperArm.rotation.x = 0.05;
-    leftUpperArm.rotation.y = 0;
-    leftUpperArm.rotation.z = 1.35;
+    leftUpperArm.rotation.x = relaxedPose.leftUpperArm.x;
+    leftUpperArm.rotation.y = relaxedPose.leftUpperArm.y;
+    leftUpperArm.rotation.z = relaxedPose.leftUpperArm.z;
   }
 
   if (leftLowerArm) {
-    leftLowerArm.rotation.x = 0;
-    leftLowerArm.rotation.y = 0;
-    leftLowerArm.rotation.z = 0.08;
+    leftLowerArm.rotation.x = relaxedPose.leftLowerArm.x;
+    leftLowerArm.rotation.y = relaxedPose.leftLowerArm.y;
+    leftLowerArm.rotation.z = relaxedPose.leftLowerArm.z;
   }
 
   if (leftHand) {
-    leftHand.rotation.x = 0;
-    leftHand.rotation.y = 0;
-    leftHand.rotation.z = 0;
+    leftHand.rotation.x = relaxedPose.leftHand.x;
+    leftHand.rotation.y = relaxedPose.leftHand.y;
+    leftHand.rotation.z = relaxedPose.leftHand.z;
+  }
+
+  if (rightShoulder) {
+    rightShoulder.rotation.x = relaxedPose.rightShoulder.x;
+    rightShoulder.rotation.y = relaxedPose.rightShoulder.y;
+    rightShoulder.rotation.z = relaxedPose.rightShoulder.z;
   }
 
   if (rightUpperArm) {
-    rightUpperArm.rotation.x = 0.05;
-    rightUpperArm.rotation.y = 0;
-    rightUpperArm.rotation.z = -1.35;
+    rightUpperArm.rotation.x = relaxedPose.rightUpperArm.x;
+    rightUpperArm.rotation.y = relaxedPose.rightUpperArm.y;
+    rightUpperArm.rotation.z = relaxedPose.rightUpperArm.z;
   }
 
   if (rightLowerArm) {
-    rightLowerArm.rotation.x = 0;
-    rightLowerArm.rotation.y = 0;
-    rightLowerArm.rotation.z = -0.08;
+    rightLowerArm.rotation.x = relaxedPose.rightLowerArm.x;
+    rightLowerArm.rotation.y = relaxedPose.rightLowerArm.y;
+    rightLowerArm.rotation.z = relaxedPose.rightLowerArm.z;
   }
 
   if (rightHand) {
-    rightHand.rotation.x = 0;
-    rightHand.rotation.y = 0;
-    rightHand.rotation.z = 0;
+    rightHand.rotation.x = relaxedPose.rightHand.x;
+    rightHand.rotation.y = relaxedPose.rightHand.y;
+    rightHand.rotation.z = relaxedPose.rightHand.z;
   }
 }
 
