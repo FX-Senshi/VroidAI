@@ -37614,7 +37614,7 @@ var mobileMenuButton = document.getElementById("mobileMenuButton");
 var mobileMenuBackdrop = document.getElementById("mobileMenuBackdrop");
 var mobileMenuCloseButton = document.getElementById("mobileMenuCloseButton");
 var runtimeSearchParams = new URLSearchParams(window.location.search);
-var BUILD_VERSION = "20260321s";
+var BUILD_VERSION = "20260322a";
 var DEBUG_LIP_SYNC_MODE = runtimeSearchParams.has("debugLipSync");
 var DEBUG_LIP_SYNC_AUTORUN = runtimeSearchParams.has("debugLipSyncAutoRun");
 var FEMALE_VOICE_NAME_PATTERN = /(female|woman|girl|kyoko|nanami|naomi|ayumi|haruka|sayaka|sakura|samantha|zira|aria|jenny|sonia|monica|lucia|hemi|xiaoxiao|huihui|ja-jp nanami|ja-jp haruka)/iu;
@@ -37723,11 +37723,11 @@ var RELAXED_POSE_OVERRIDES = {
 };
 var RELAXED_UPPER_BODY_OVERRIDES = {
   "\u5973\u306E\u5B50ver2.vrm": {
-    spineX: 0.01,
-    chestX: 4e-3,
-    neckX: 0.018,
-    headX: 0.01,
-    nodScale: 0.34
+    spineX: 2e-3,
+    chestX: 1e-3,
+    neckX: -4e-3,
+    headX: -6e-3,
+    nodScale: 0.26
   }
 };
 var DEFAULT_RELAXED_UPPER_BODY = {
