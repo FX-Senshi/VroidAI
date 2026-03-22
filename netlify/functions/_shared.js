@@ -13,8 +13,17 @@ const GROWTH_KEY = "meta/growth.json";
 const fixedModelName = "女の子ver2.vrm";
 const sessionHistoryLimit = 24;
 const modelInputMessageLimit = 18;
-const defaultTtsModel = "gpt-4o-mini-tts";
-const defaultTtsVoice = "shimmer";
+const defaultTtsProvider = "openai";
+const defaultOpenAiTtsModel = "gpt-4o-mini-tts";
+const defaultOpenAiTtsVoice = "shimmer";
+const defaultVoicevoxBaseUrl = "http://127.0.0.1:50021";
+const defaultVoicevoxSpeaker = 72;
+const defaultVoicevoxSpeedScale = 0.94;
+const defaultVoicevoxPitchScale = 0.02;
+const defaultVoicevoxIntonationScale = 1.15;
+const defaultVoicevoxVolumeScale = 1;
+const defaultVoicevoxPrePhonemeLength = 0.04;
+const defaultVoicevoxPostPhonemeLength = 0.08;
 const defaultTtsProfile = "shared-cute";
 const sharedTtsProfiles = {
   "shared-cute": {
@@ -136,12 +145,50 @@ function normalizeTtsErrorMessage(statusCode, payload) {
   return message;
 }
 
+function getTtsProvider() {
+  return String(process.env.TTS_PROVIDER || defaultTtsProvider).trim().toLowerCase() || defaultTtsProvider;
+}
+
+function getOpenAiTtsModel() {
+  return process.env.TTS_MODEL || defaultOpenAiTtsModel;
+}
+
+function getOpenAiTtsVoice() {
+  return process.env.TTS_VOICE || defaultOpenAiTtsVoice;
+}
+
+function getVoicevoxBaseUrl() {
+  return String(process.env.VOICEVOX_BASE_URL || defaultVoicevoxBaseUrl).trim().replace(/\/+$/, "");
+}
+
+function getVoicevoxSpeaker() {
+  const speaker = Number(process.env.VOICEVOX_SPEAKER ?? defaultVoicevoxSpeaker);
+  return Number.isInteger(speaker) && speaker >= 0 ? speaker : defaultVoicevoxSpeaker;
+}
+
+function getVoicevoxScale(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function getTtsModel() {
-  return process.env.TTS_MODEL || defaultTtsModel;
+  if (getTtsProvider() === "voicevox") {
+    return "voicevox-engine";
+  }
+
+  return getOpenAiTtsModel();
 }
 
 function getTtsVoice() {
-  return process.env.TTS_VOICE || defaultTtsVoice;
+  if (getTtsProvider() === "voicevox") {
+    return `speaker:${getVoicevoxSpeaker()}`;
+  }
+
+  return getOpenAiTtsVoice();
 }
 
 function resolveTtsProfile(profileId) {
@@ -439,8 +486,8 @@ async function requestOpenAi(messages, savedContext = "", growthContext = "") {
 async function requestOpenAiTts(text, profileId = defaultTtsProfile) {
   const profile = resolveTtsProfile(profileId);
   const payload = {
-    model: getTtsModel(),
-    voice: getTtsVoice(),
+    model: getOpenAiTtsModel(),
+    voice: getOpenAiTtsVoice(),
     input: String(text || "").trim()
   };
 
@@ -470,9 +517,122 @@ async function requestOpenAiTts(text, profileId = defaultTtsProfile) {
     status: 200,
     body: Buffer.from(await response.arrayBuffer()).toString("base64"),
     contentType: response.headers.get("content-type") || "audio/mpeg",
+    model: getOpenAiTtsModel(),
+    voice: getOpenAiTtsVoice(),
+    profileId: profile.id
+  };
+}
+
+function applyVoicevoxQueryTuning(audioQuery, profileId = defaultTtsProfile) {
+  const profile = resolveTtsProfile(profileId);
+  const tunedQuery = {
+    ...audioQuery,
+    speedScale: clampNumber(
+      getVoicevoxScale("VOICEVOX_SPEED_SCALE", defaultVoicevoxSpeedScale),
+      0.5,
+      2
+    ),
+    pitchScale: clampNumber(
+      getVoicevoxScale("VOICEVOX_PITCH_SCALE", defaultVoicevoxPitchScale),
+      -0.15,
+      0.15
+    ),
+    intonationScale: clampNumber(
+      getVoicevoxScale("VOICEVOX_INTONATION_SCALE", defaultVoicevoxIntonationScale),
+      0,
+      2
+    ),
+    volumeScale: clampNumber(
+      getVoicevoxScale("VOICEVOX_VOLUME_SCALE", defaultVoicevoxVolumeScale),
+      0,
+      2
+    ),
+    prePhonemeLength: clampNumber(
+      getVoicevoxScale("VOICEVOX_PRE_PHONEME_LENGTH", defaultVoicevoxPrePhonemeLength),
+      0,
+      1.5
+    ),
+    postPhonemeLength: clampNumber(
+      getVoicevoxScale("VOICEVOX_POST_PHONEME_LENGTH", defaultVoicevoxPostPhonemeLength),
+      0,
+      1.5
+    )
+  };
+
+  if (profile.id === "shared-cute") {
+    tunedQuery.pitchScale = clampNumber(tunedQuery.pitchScale + 0.015, -0.15, 0.15);
+    tunedQuery.intonationScale = clampNumber(tunedQuery.intonationScale + 0.08, 0, 2);
+  }
+
+  if (profile.id === "shared-soft") {
+    tunedQuery.speedScale = clampNumber(tunedQuery.speedScale - 0.03, 0.5, 2);
+    tunedQuery.intonationScale = clampNumber(tunedQuery.intonationScale - 0.05, 0, 2);
+  }
+
+  return tunedQuery;
+}
+
+function normalizeVoicevoxErrorMessage(statusCode, payload) {
+  const message = payload?.detail || payload?.message || payload?.error || "VOICEVOX request failed.";
+
+  if (statusCode === 404) {
+    return "VOICEVOX endpoint was not found. Check that VOICEVOX Engine is reachable from Netlify and VOICEVOX_BASE_URL is correct.";
+  }
+
+  if (statusCode >= 500) {
+    return `VOICEVOX Engine returned ${statusCode}. ${message}`;
+  }
+
+  return message;
+}
+
+async function requestVoicevoxTts(text, profileId = defaultTtsProfile) {
+  const speaker = getVoicevoxSpeaker();
+  const audioQueryUrl = new URL(`${getVoicevoxBaseUrl()}/audio_query`);
+  audioQueryUrl.searchParams.set("speaker", String(speaker));
+  audioQueryUrl.searchParams.set("text", String(text || "").trim());
+
+  const queryResponse = await fetch(audioQueryUrl, {
+    method: "POST"
+  });
+
+  if (!queryResponse.ok) {
+    return {
+      ok: false,
+      status: queryResponse.status,
+      payload: await readJsonLikeErrorPayload(queryResponse)
+    };
+  }
+
+  const audioQuery = applyVoicevoxQueryTuning(await queryResponse.json(), profileId);
+  const synthesisUrl = new URL(`${getVoicevoxBaseUrl()}/synthesis`);
+  synthesisUrl.searchParams.set("speaker", String(speaker));
+
+  const synthesisResponse = await fetch(synthesisUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "audio/wav"
+    },
+    body: JSON.stringify(audioQuery)
+  });
+
+  if (!synthesisResponse.ok) {
+    return {
+      ok: false,
+      status: synthesisResponse.status,
+      payload: await readJsonLikeErrorPayload(synthesisResponse)
+    };
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    body: Buffer.from(await synthesisResponse.arrayBuffer()).toString("base64"),
+    contentType: synthesisResponse.headers.get("content-type") || "audio/wav",
     model: getTtsModel(),
     voice: getTtsVoice(),
-    profileId: profile.id
+    profileId: resolveTtsProfile(profileId).id
   };
 }
 
@@ -610,9 +770,12 @@ async function getStatusPayload(event) {
     return {
       openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-      ttsConfigured: Boolean(process.env.OPENAI_API_KEY),
+      ttsProvider: getTtsProvider(),
+      ttsConfigured: getTtsProvider() === "voicevox" ? Boolean(getVoicevoxBaseUrl()) : Boolean(process.env.OPENAI_API_KEY),
       ttsModel: getTtsModel(),
       ttsVoice: getTtsVoice(),
+      voicevoxBaseUrl: getVoicevoxBaseUrl(),
+      voicevoxSpeaker: getVoicevoxSpeaker(),
       memoryImport: unavailableMemoryImport(),
       database: unavailableDatabase(),
       growth: unavailableGrowth(),
@@ -628,9 +791,12 @@ async function getStatusPayload(event) {
   return {
     openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-    ttsConfigured: Boolean(process.env.OPENAI_API_KEY),
+    ttsProvider: getTtsProvider(),
+    ttsConfigured: getTtsProvider() === "voicevox" ? Boolean(getVoicevoxBaseUrl()) : Boolean(process.env.OPENAI_API_KEY),
     ttsModel: getTtsModel(),
     ttsVoice: getTtsVoice(),
+    voicevoxBaseUrl: getVoicevoxBaseUrl(),
+    voicevoxSpeaker: getVoicevoxSpeaker(),
     memoryImport: unavailableMemoryImport(),
     database: {
       available: true,
@@ -691,8 +857,13 @@ module.exports = {
   getLatestUserContent,
   requestOpenAi,
   requestOpenAiTts,
+  requestVoicevoxTts,
   getTtsModel,
   getTtsVoice,
+  getTtsProvider,
+  getVoicevoxBaseUrl,
+  getVoicevoxSpeaker,
+  normalizeVoicevoxErrorMessage,
   appendSessionMessages,
   getHistoryPayload,
   getStatusPayload,

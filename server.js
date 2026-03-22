@@ -20,9 +20,17 @@ const MINIMAL_APP_MODE = false;
 const defaultOpenAiModel = "gpt-4.1-mini";
 const defaultOllamaBaseUrl = "http://127.0.0.1:11434";
 const defaultOllamaModel = "qwen2.5:3b";
-const defaultTtsProvider = "openai";
-const defaultTtsModel = "gpt-4o-mini-tts";
-const defaultTtsVoice = "shimmer";
+const defaultTtsProvider = "voicevox";
+const defaultOpenAiTtsModel = "gpt-4o-mini-tts";
+const defaultOpenAiTtsVoice = "shimmer";
+const defaultVoicevoxBaseUrl = "http://127.0.0.1:50021";
+const defaultVoicevoxSpeaker = 72;
+const defaultVoicevoxSpeedScale = 0.94;
+const defaultVoicevoxPitchScale = 0.02;
+const defaultVoicevoxIntonationScale = 1.15;
+const defaultVoicevoxVolumeScale = 1;
+const defaultVoicevoxPrePhonemeLength = 0.04;
+const defaultVoicevoxPostPhonemeLength = 0.08;
 const defaultTtsProfile = "shared-cute";
 const sharedTtsProfiles = {
   "shared-cute": {
@@ -153,12 +161,46 @@ function getTtsProvider() {
   return String(process.env.TTS_PROVIDER || defaultTtsProvider).trim().toLowerCase() || defaultTtsProvider;
 }
 
+function getOpenAiTtsModel() {
+  return process.env.TTS_MODEL || defaultOpenAiTtsModel;
+}
+
+function getOpenAiTtsVoice() {
+  return process.env.TTS_VOICE || defaultOpenAiTtsVoice;
+}
+
+function getVoicevoxBaseUrl() {
+  return String(process.env.VOICEVOX_BASE_URL || defaultVoicevoxBaseUrl).trim().replace(/\/+$/, "");
+}
+
+function getVoicevoxSpeaker() {
+  const speaker = Number(process.env.VOICEVOX_SPEAKER ?? defaultVoicevoxSpeaker);
+  return Number.isInteger(speaker) && speaker >= 0 ? speaker : defaultVoicevoxSpeaker;
+}
+
+function getVoicevoxScale(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function getTtsModel() {
-  return process.env.TTS_MODEL || defaultTtsModel;
+  if (getTtsProvider() === "voicevox") {
+    return "voicevox-engine";
+  }
+
+  return getOpenAiTtsModel();
 }
 
 function getTtsVoice() {
-  return process.env.TTS_VOICE || defaultTtsVoice;
+  if (getTtsProvider() === "voicevox") {
+    return `speaker:${getVoicevoxSpeaker()}`;
+  }
+
+  return getOpenAiTtsVoice();
 }
 
 function resolveTtsProfile(profileId) {
@@ -177,6 +219,10 @@ function isOpenAiConfigured() {
 function isTtsConfigured() {
   if (getTtsProvider() === "openai") {
     return isOpenAiConfigured();
+  }
+
+  if (getTtsProvider() === "voicevox") {
+    return Boolean(getVoicevoxBaseUrl());
   }
 
   return false;
@@ -221,6 +267,33 @@ async function checkOllamaAvailability() {
     return {
       available: false,
       message: error.message || "Ollama is not reachable."
+    };
+  }
+}
+
+async function checkVoicevoxAvailability() {
+  try {
+    const response = await fetch(`${getVoicevoxBaseUrl()}/version`, {
+      method: "GET",
+      signal: AbortSignal.timeout(1500)
+    });
+
+    if (!response.ok) {
+      return {
+        available: false,
+        message: `VOICEVOX responded with ${response.status}.`
+      };
+    }
+
+    const version = await response.text();
+    return {
+      available: true,
+      message: version ? `VOICEVOX ${version.trim()}` : "VOICEVOX is reachable."
+    };
+  } catch (error) {
+    return {
+      available: false,
+      message: error.message || "VOICEVOX is not reachable."
     };
   }
 }
@@ -354,6 +427,20 @@ function normalizeTtsErrorMessage(statusCode, payload) {
 
   if (statusCode === 429) {
     return "OpenAI TTS rate limit or usage limit was reached. Please wait a little and try again.";
+  }
+
+  return message;
+}
+
+function normalizeVoicevoxErrorMessage(statusCode, payload) {
+  const message = payload?.detail || payload?.message || payload?.error || "VOICEVOX request failed.";
+
+  if (statusCode === 404) {
+    return "VOICEVOX endpoint was not found. Check that VOICEVOX Engine is running and VOICEVOX_BASE_URL is correct.";
+  }
+
+  if (statusCode >= 500) {
+    return `VOICEVOX Engine returned ${statusCode}. ${message}`;
   }
 
   return message;
@@ -2093,8 +2180,8 @@ async function requestOpenAiTts(text, profileId = defaultTtsProfile) {
 
   const profile = resolveTtsProfile(profileId);
   const requestPayload = {
-    model: getTtsModel(),
-    voice: getTtsVoice(),
+    model: getOpenAiTtsModel(),
+    voice: getOpenAiTtsVoice(),
     input: String(text || "").trim()
   };
 
@@ -2126,8 +2213,8 @@ async function requestOpenAiTts(text, profileId = defaultTtsProfile) {
       status: 200,
       audioBuffer: Buffer.from(await response.arrayBuffer()),
       contentType: response.headers.get("content-type") || "audio/mpeg",
-      model: getTtsModel(),
-      voice: getTtsVoice(),
+      model: getOpenAiTtsModel(),
+      voice: getOpenAiTtsVoice(),
       profileId: profile.id
     };
   } catch (error) {
@@ -2135,6 +2222,125 @@ async function requestOpenAiTts(text, profileId = defaultTtsProfile) {
       ok: false,
       status: 502,
       error: error.message || "OpenAI TTS request failed."
+    };
+  }
+}
+
+function applyVoicevoxQueryTuning(audioQuery, profileId = defaultTtsProfile) {
+  const profile = resolveTtsProfile(profileId);
+  const tunedQuery = {
+    ...audioQuery,
+    speedScale: clampNumber(
+      getVoicevoxScale("VOICEVOX_SPEED_SCALE", defaultVoicevoxSpeedScale),
+      0.5,
+      2
+    ),
+    pitchScale: clampNumber(
+      getVoicevoxScale("VOICEVOX_PITCH_SCALE", defaultVoicevoxPitchScale),
+      -0.15,
+      0.15
+    ),
+    intonationScale: clampNumber(
+      getVoicevoxScale("VOICEVOX_INTONATION_SCALE", defaultVoicevoxIntonationScale),
+      0,
+      2
+    ),
+    volumeScale: clampNumber(
+      getVoicevoxScale("VOICEVOX_VOLUME_SCALE", defaultVoicevoxVolumeScale),
+      0,
+      2
+    ),
+    prePhonemeLength: clampNumber(
+      getVoicevoxScale("VOICEVOX_PRE_PHONEME_LENGTH", defaultVoicevoxPrePhonemeLength),
+      0,
+      1.5
+    ),
+    postPhonemeLength: clampNumber(
+      getVoicevoxScale("VOICEVOX_POST_PHONEME_LENGTH", defaultVoicevoxPostPhonemeLength),
+      0,
+      1.5
+    )
+  };
+
+  if (profile.id === "shared-cute") {
+    tunedQuery.pitchScale = clampNumber(tunedQuery.pitchScale + 0.015, -0.15, 0.15);
+    tunedQuery.intonationScale = clampNumber(tunedQuery.intonationScale + 0.08, 0, 2);
+  }
+
+  if (profile.id === "shared-soft") {
+    tunedQuery.speedScale = clampNumber(tunedQuery.speedScale - 0.03, 0.5, 2);
+    tunedQuery.intonationScale = clampNumber(tunedQuery.intonationScale - 0.05, 0, 2);
+  }
+
+  return tunedQuery;
+}
+
+async function requestVoicevoxTts(text, profileId = defaultTtsProfile) {
+  if (!isTtsConfigured()) {
+    return {
+      ok: false,
+      status: 500,
+      error: "VOICEVOX_BASE_URL is not configured for shared TTS."
+    };
+  }
+
+  const speaker = getVoicevoxSpeaker();
+  const audioQueryUrl = new URL(`${getVoicevoxBaseUrl()}/audio_query`);
+  audioQueryUrl.searchParams.set("speaker", String(speaker));
+  audioQueryUrl.searchParams.set("text", String(text || "").trim());
+
+  try {
+    const queryResponse = await fetch(audioQueryUrl, {
+      method: "POST",
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!queryResponse.ok) {
+      const payload = await readJsonLikeErrorPayload(queryResponse);
+      return {
+        ok: false,
+        status: queryResponse.status,
+        error: normalizeVoicevoxErrorMessage(queryResponse.status, payload)
+      };
+    }
+
+    const audioQuery = applyVoicevoxQueryTuning(await queryResponse.json(), profileId);
+    const synthesisUrl = new URL(`${getVoicevoxBaseUrl()}/synthesis`);
+    synthesisUrl.searchParams.set("speaker", String(speaker));
+
+    const synthesisResponse = await fetch(synthesisUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "audio/wav"
+      },
+      body: JSON.stringify(audioQuery),
+      signal: AbortSignal.timeout(45000)
+    });
+
+    if (!synthesisResponse.ok) {
+      const payload = await readJsonLikeErrorPayload(synthesisResponse);
+      return {
+        ok: false,
+        status: synthesisResponse.status,
+        error: normalizeVoicevoxErrorMessage(synthesisResponse.status, payload)
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      audioBuffer: Buffer.from(await synthesisResponse.arrayBuffer()),
+      contentType: synthesisResponse.headers.get("content-type") || "audio/wav",
+      model: getTtsModel(),
+      voice: getTtsVoice(),
+      profileId: resolveTtsProfile(profileId).id
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 503,
+      error: `Could not reach VOICEVOX at ${getVoicevoxBaseUrl()}. ${error.message || ""}`.trim()
     };
   }
 }
@@ -2225,6 +2431,7 @@ async function handleHistory(res, url) {
 async function handleStatus(res) {
   const provider = resolveLlmProvider();
   const ollamaStatus = await checkOllamaAvailability();
+  const voicevoxStatus = await checkVoicevoxAvailability();
   const payload = {
     llmProvider: provider,
     openaiConfigured: isOpenAiConfigured(),
@@ -2233,6 +2440,10 @@ async function handleStatus(res) {
     ttsConfigured: isTtsConfigured(),
     ttsModel: getTtsModel(),
     ttsVoice: getTtsVoice(),
+    voicevoxBaseUrl: getVoicevoxBaseUrl(),
+    voicevoxSpeaker: getVoicevoxSpeaker(),
+    voicevoxReachable: voicevoxStatus.available,
+    voicevoxMessage: voicevoxStatus.message,
     ollamaConfigured: isOllamaConfigured(),
     ollamaModel: getOllamaModel(),
     ollamaBaseUrl: getOllamaBaseUrl(),
@@ -2271,15 +2482,18 @@ async function handleTts(req, res) {
       return;
     }
 
-    if (getTtsProvider() !== "openai") {
+    let ttsResult = null;
+    if (getTtsProvider() === "openai") {
+      ttsResult = await requestOpenAiTts(text, profileId);
+    } else if (getTtsProvider() === "voicevox") {
+      ttsResult = await requestVoicevoxTts(text, profileId);
+    } else {
       sendJson(res, 400, {
         error: `Unsupported TTS provider '${getTtsProvider()}'.`,
         ttsProvider: getTtsProvider()
       });
       return;
     }
-
-    const ttsResult = await requestOpenAiTts(text, profileId);
     if (!ttsResult.ok) {
       sendJson(res, ttsResult.status || 500, {
         error: ttsResult.error || "TTS request failed.",
@@ -2451,6 +2665,9 @@ http.createServer(async (req, res) => {
   console.log(`Phone browser: http://${ip}:${port}`);
   console.log(`LLM provider: ${provider}`);
   console.log(`TTS provider: ${getTtsProvider()} (${getTtsModel()} / ${getTtsVoice()})`);
+  if (getTtsProvider() === "voicevox") {
+    console.log(`VOICEVOX endpoint: ${getVoicevoxBaseUrl()} (speaker ${getVoicevoxSpeaker()})`);
+  }
   console.log(`OpenAI key configured: ${isOpenAiConfigured() ? "yes" : "no"}`);
   console.log(`Ollama configured: ${isOllamaConfigured() ? "yes" : "no"} (${getOllamaModel()} @ ${getOllamaBaseUrl()})`);
   if (MINIMAL_APP_MODE) {
